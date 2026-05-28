@@ -11,6 +11,7 @@ import {
   createDomSchedulerFromRuntime,
   createDomRenderer,
   createDomRendererFromManifest,
+  createHtmlTemplate,
   deserializeDomState,
   fromStateEngine,
   hydrateDomRenderer,
@@ -833,23 +834,26 @@ async function runAppApiSmoke() {
         title: 'Runtime JSX',
         user: { name: 'Compiled JSX' },
         todos: [
-          { id: 'a', text: 'Alpha' },
-          { id: 'b', text: 'Beta' }
+          { id: 'a', text: 'Alpha', done: false },
+          { id: 'b', text: 'Beta', done: true }
         ]
       },
       { diff: { arrayKey: 'id' } }
     );
     const templates = {
-      'todo-row.v1': {
-        create(row) {
-          const item = dom.window.document.createElement('li');
-          item.textContent = row.text;
-          return item;
-        },
-        update(node, row) {
-          node.textContent = row.text;
-        }
-      }
+      'todo-row.v1': createHtmlTemplate(
+        '<li><span data-part="text"></span><input data-part="done" type="checkbox"></li>',
+        [
+          { selector: '[data-part="text"]', text: 'text' },
+          {
+            selector: '[data-part="done"]',
+            prop: { checked: 'done' },
+            attr: { 'aria-checked': 'done' },
+            class: { 'is-done': 'done' }
+          }
+        ],
+        { document: dom.window.document }
+      )
     };
 
     function RuntimeView() {
@@ -860,7 +864,7 @@ async function runAppApiSmoke() {
           jsxEach('/todos/*', {
             frId: 'runtime-todos',
             as: 'ul',
-            fields: ['text'],
+            fields: ['text', 'done'],
             keyBy: 'id',
             template: 'todo-row.v1'
           }),
@@ -879,9 +883,20 @@ async function runAppApiSmoke() {
     const runtimeRenderer = runtimeApp.mount(jsx(RuntimeView, {}));
     assert.strictEqual(root.querySelector('[data-frontier-id="runtime-title"]').textContent, 'Runtime JSX');
     assert.deepStrictEqual(Array.from(root.querySelectorAll('[data-frontier-id="runtime-todos"] li'), (item) => item.textContent), ['Alpha', 'Beta']);
+    assert.strictEqual(root.querySelector('[data-frontier-id="runtime-todos"] input').checked, false);
     state.commitPatch([[0, ['title'], 'Runtime Updated']]);
     runtimeApp.flush();
     assert.strictEqual(root.querySelector('[data-frontier-id="runtime-title"]').textContent, 'Runtime Updated');
+    state.commitPatch([
+      [0, ['todos', 0, 'text'], 'Alpha updated'],
+      [0, ['todos', 0, 'done'], true]
+    ]);
+    runtimeApp.flush();
+    const firstTodoInput = root.querySelector('[data-frontier-id="runtime-todos"] input');
+    assert.strictEqual(root.querySelector('[data-frontier-id="runtime-todos"] li').textContent, 'Alpha updated');
+    assert.strictEqual(firstTodoInput.checked, true);
+    assert.strictEqual(firstTodoInput.getAttribute('aria-checked'), '');
+    assert.strictEqual(firstTodoInput.classList.contains('is-done'), true);
     const runtimeSnapshot = runtimeApp.serialize();
     assert.strictEqual(runtimeSnapshot.kind, 'frontier.dom.state');
     assert.ok(runtimeSnapshot.manifest.bindings.some((binding) => binding.kind === 'virtualEach'));
@@ -933,6 +948,7 @@ function runVirtualDomSmoke() {
     { diff: { arrayKey: 'id' } }
   );
   const renderer = createDomRenderer({ source: fromStateEngine(state), trace: true });
+  let updateCalls = 0;
   renderer.virtualEach('/rows/*', {
     container: list,
     keyBy: 'id',
@@ -948,6 +964,7 @@ function runVirtualDomSmoke() {
       return item;
     },
     update(node, row, context) {
+      updateCalls++;
       node.textContent = context.index + ':' + row.text;
     }
   });
@@ -957,6 +974,11 @@ function runVirtualDomSmoke() {
   state.commitPatch([[0, ['viewport', 'offset'], 40]]);
   renderer.flush();
   assert.deepStrictEqual(readVirtualRowIds(list), ['row-3', 'row-4', 'row-5', 'row-6']);
+  assert.strictEqual(updateCalls, 0);
+  state.commitPatch([[0, ['rows', 4, 'text'], 'Row 4 updated']]);
+  renderer.flush();
+  assert.strictEqual(updateCalls, 1);
+  assert.strictEqual(list.querySelector('[data-id="row-4"]').textContent, '4:Row 4 updated');
   assert.ok(renderer.getTrace().some((event) => event.kind === 'virtual-range'));
   renderer.dispose();
   dom.window.close();

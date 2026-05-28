@@ -537,6 +537,27 @@ export interface FrontierDomTemplateDefinition<TNode extends Node = Node> {
   dispose?: (node: TNode, context: FrontierDomEachItemContext) => void;
 }
 
+export type FrontierDomHtmlTemplateValue =
+  | string
+  | number
+  | readonly (string | number)[]
+  | ((value: JsonValue | undefined, context: FrontierDomEachItemContext) => unknown);
+
+export interface FrontierDomHtmlTemplateBinding {
+  selector?: string;
+  text?: FrontierDomHtmlTemplateValue;
+  attr?: Record<string, FrontierDomHtmlTemplateValue>;
+  prop?: Record<string, FrontierDomHtmlTemplateValue>;
+  class?: Record<string, FrontierDomHtmlTemplateValue>;
+  className?: Record<string, FrontierDomHtmlTemplateValue>;
+  style?: Record<string, FrontierDomHtmlTemplateValue>;
+}
+
+export interface FrontierDomHtmlTemplateOptions {
+  document?: Document;
+  root?: string;
+}
+
 export type FrontierDomActionHandler<TEvent extends Event = Event> = (context: {
   event: TEvent;
   renderer: FrontierDomRenderer;
@@ -700,6 +721,9 @@ type EachEntry<TNode extends Node = Node> = {
   key: string;
   index: number;
   node: TNode;
+  offset?: number;
+  size?: number;
+  seen?: number;
 };
 
 type HydrationView = {
@@ -735,6 +759,7 @@ type FrontierDomResolvedMountOptions = Required<Pick<FrontierDomAppMountOptions,
 const EMPTY_PATCH: Patch = [];
 const DEFAULT_TRACE_LIMIT = 2048;
 const PATCH_VALUE_NOT_FOUND = Symbol('frontierDomPatchValueNotFound');
+const PATCH_VALUE_UNDEFINED = Symbol('frontierDomPatchValueUndefined');
 const VIRTUAL_OFFSET_STATE: unique symbol = Symbol('frontier.dom.virtualOffset');
 const VIRTUAL_SIZE_STATE: unique symbol = Symbol('frontier.dom.virtualSize');
 let nextDomSchedulerAdapterId = 1;
@@ -742,6 +767,26 @@ let nextDomSchedulerAdapterId = 1;
 type FrontierVirtualElement = Element & {
   [VIRTUAL_OFFSET_STATE]?: string;
   [VIRTUAL_SIZE_STATE]?: string;
+};
+
+type HtmlTemplateValueOperation = {
+  name: string;
+  value: FrontierDomHtmlTemplateValue;
+};
+
+type CompiledHtmlTemplateBinding = {
+  selector?: string;
+  text?: FrontierDomHtmlTemplateValue;
+  attr?: HtmlTemplateValueOperation[];
+  prop?: HtmlTemplateValueOperation[];
+  class?: HtmlTemplateValueOperation[];
+  style?: HtmlTemplateValueOperation[];
+  requiresElement: boolean;
+};
+
+type ResolvedHtmlTemplateBinding = {
+  binding: CompiledHtmlTemplateBinding;
+  target: Node;
 };
 
 export function fromStateEngine(engine: StateEngine): FrontierDomSource {
@@ -753,6 +798,37 @@ export function fromStateEngine(engine: StateEngine): FrontierDomSource {
     getBasis: stateEngine.getBasis ? () => stateEngine.getBasis?.() : undefined,
     getHeads: stateEngine.getHeads ? () => stateEngine.getHeads?.() : undefined,
     getStateVector: stateEngine.getStateVector ? () => stateEngine.getStateVector?.() : undefined
+  };
+}
+
+export function createHtmlTemplate<TNode extends Node = Node>(
+  html: string,
+  bindings: readonly FrontierDomHtmlTemplateBinding[] = [],
+  options: FrontierDomHtmlTemplateOptions = {}
+): FrontierDomTemplateDefinition<TNode> {
+  const compiledBindings = compileHtmlTemplateBindings(bindings);
+  const parsedRoots = new WeakMap<Document, Node>();
+  const bindingCache = new WeakMap<Node, ResolvedHtmlTemplateBinding[]>();
+
+  return {
+    create(value, context) {
+      const root = readHtmlTemplateRoot(html, options, context, parsedRoots).cloneNode(true) as TNode;
+      const resolvedBindings = resolveHtmlTemplateBindings(root, compiledBindings);
+      bindingCache.set(root, resolvedBindings);
+      applyHtmlTemplateBindings(resolvedBindings, value, context);
+      return root;
+    },
+    update(node, value, context) {
+      let resolvedBindings = bindingCache.get(node);
+      if (!resolvedBindings) {
+        resolvedBindings = resolveHtmlTemplateBindings(node, compiledBindings);
+        bindingCache.set(node, resolvedBindings);
+      }
+      applyHtmlTemplateBindings(resolvedBindings, value, context);
+    },
+    dispose(node) {
+      bindingCache.delete(node);
+    }
   };
 }
 
@@ -843,12 +919,35 @@ export function createDomRendererFromManifest(options: FrontierDomManifestRender
     formatters: options.formatters ?? {},
     layouts: options.layouts ?? {}
   };
-  const targetCache = new Map<string, Node>();
+  const targetCache = createManifestTargetCache(root, manifest);
   reconcileHydrationBasis(manifest, renderer.source, options.basisPolicy ?? 'ignore', options.onBasisMismatch);
   for (let i = 0; i < manifest.bindings.length; i++) {
     mountManifestBinding(renderer, root, manifest, manifest.bindings[i], registry, options.hydrateExisting !== false, targetCache);
   }
   return renderer;
+}
+
+function createManifestTargetCache(root: ParentNode, manifest: FrontierDomRenderManifestV1): Map<string, Node> {
+  const cache = new Map<string, Node>();
+  let anchorTargets = manifest.root?.anchor && !manifest.root.selector ? 1 : 0;
+  for (let i = 0; i < manifest.bindings.length; i++) {
+    const binding = manifest.bindings[i];
+    const target = binding.target ?? ((binding.kind === 'each' || binding.kind === 'virtualEach') ? binding.container : undefined);
+    if (target?.anchor && !target.selector) anchorTargets++;
+  }
+  if (anchorTargets < 8 || typeof root.querySelectorAll !== 'function') return cache;
+  cacheFrontierAnchor(root, cache);
+  const anchored = root.querySelectorAll('[data-frontier-id]');
+  for (let i = 0; i < anchored.length; i++) cacheFrontierAnchor(anchored[i], cache);
+  return cache;
+}
+
+function cacheFrontierAnchor(node: ParentNode | Element, cache: Map<string, Node>): void {
+  if (!isElementLike(node)) return;
+  const anchor = node.getAttribute('data-frontier-id');
+  if (!anchor) return;
+  const key = targetCacheKey({ anchor });
+  if (!cache.has(key)) cache.set(key, node);
 }
 
 export const hydrateDomRenderer = createDomRendererFromManifest;
@@ -1391,11 +1490,11 @@ class DomRenderer implements FrontierDomRenderer {
       if (isTextNode(target)) {
         if (target.data !== next) {
           target.data = next;
-          this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
+          if (this.traceEnabled) this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
         }
       } else if (target.textContent !== next) {
         target.textContent = next;
-        this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
+        if (this.traceEnabled) this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
       }
     });
   }
@@ -1408,14 +1507,14 @@ class DomRenderer implements FrontierDomRenderer {
       if (shouldRemove(value)) {
         if (element.hasAttribute(name)) {
           element.removeAttribute(name);
-          this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
+          if (this.traceEnabled) this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
         }
         return;
       }
       const next = formatter(value);
       if (element.getAttribute(name) !== next) {
         element.setAttribute(name, next);
-        this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
+        if (this.traceEnabled) this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
       }
     });
   }
@@ -1425,7 +1524,7 @@ class DomRenderer implements FrontierDomRenderer {
     return this.addValueBinding('prop', path, bindingPath, options, (record, value) => {
       if ((element as any)[name] !== value) {
         (element as any)[name] = value;
-        this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
+        if (this.traceEnabled) this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
       }
     });
   }
@@ -1437,7 +1536,7 @@ class DomRenderer implements FrontierDomRenderer {
       const next = truthy(value);
       if (element.classList.contains(name) !== next) {
         element.classList.toggle(name, next);
-        this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
+        if (this.traceEnabled) this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
       }
     });
   }
@@ -1451,7 +1550,7 @@ class DomRenderer implements FrontierDomRenderer {
       if (style.getPropertyValue(name) !== next) {
         if (next === '') style.removeProperty(name);
         else style.setProperty(name, next, options.priority ?? '');
-        this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
+        if (this.traceEnabled) this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
       }
     });
   }
@@ -1546,11 +1645,11 @@ class DomRenderer implements FrontierDomRenderer {
       apply: (patch) => {
         if (deferDuringComposition && composing) return;
         const patchValue = patch === EMPTY_PATCH ? PATCH_VALUE_NOT_FOUND : readPatchAssignedValueResult(patch, bindingPath);
-        const value = patchValue === PATCH_VALUE_NOT_FOUND ? readPath(this.source.get(), bindingPath) : patchValue.value;
+        const value = patchValue === PATCH_VALUE_NOT_FOUND ? readPath(this.source.get(), bindingPath) : materializePatchValue(patchValue);
         if (patch !== EMPTY_PATCH && equals(record.previous, value)) return;
         record.previous = value;
         writeFormProperty(element, prop, formatter(value), preserveSelection);
-        this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
+        if (this.traceEnabled) this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
       },
       dispose: () => {
         element.removeEventListener(eventName, onInput);
@@ -1621,7 +1720,7 @@ class DomRenderer implements FrontierDomRenderer {
             for (let i = callbacks.length - 1; i >= 0; i--) callbacks[i]();
           };
         }
-        this.trace({ kind: 'effect-run', bindingId: record.id, bindingKind: record.kind, path: readPaths[0] ?? [] });
+        if (this.traceEnabled) this.trace({ kind: 'effect-run', bindingId: record.id, bindingKind: record.kind, path: readPaths[0] ?? [] });
       },
       dispose: () => {
         if (cleanup !== null) cleanup();
@@ -1653,7 +1752,7 @@ class DomRenderer implements FrontierDomRenderer {
       paths: [bindingPath],
       apply: (patch) => {
         const patchValue = patch === EMPTY_PATCH ? PATCH_VALUE_NOT_FOUND : readPatchAssignedValueResult(patch, bindingPath);
-        const value = patchValue === PATCH_VALUE_NOT_FOUND ? readPath(this.source.get(), bindingPath) : patchValue.value;
+        const value = patchValue === PATCH_VALUE_NOT_FOUND ? readPath(this.source.get(), bindingPath) : materializePatchValue(patchValue);
         const visible = truthy(value);
         const nextBranch: 'then' | 'fallback' | null = visible ? 'then' : options.fallback ? 'fallback' : null;
         if (patch !== EMPTY_PATCH && defaultValueEquals(record.previous, value) && nextBranch === currentBranch) return;
@@ -1662,7 +1761,7 @@ class DomRenderer implements FrontierDomRenderer {
           removeWhenNode(container, currentNode, currentBranch, value, false, patch, options, this);
           currentNode = null;
           currentBranch = null;
-          this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
+          if (this.traceEnabled) this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
           return;
         }
         const branch = nextBranch === 'then' ? options : options.fallback;
@@ -1678,7 +1777,7 @@ class DomRenderer implements FrontierDomRenderer {
           const before = options.before ?? null;
           if (currentNode.parentNode !== container || currentNode.nextSibling !== before) container.insertBefore(currentNode, before);
         }
-        this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
+        if (this.traceEnabled) this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: bindingPath });
       },
       dispose: () => {
         removeWhenNode(container, currentNode, currentBranch, record.previous, currentBranch === 'then', EMPTY_PATCH, options, this);
@@ -1713,7 +1812,7 @@ class DomRenderer implements FrontierDomRenderer {
       paths: [readPathValue],
       apply: (patch) => {
         if (patch !== EMPTY_PATCH && tryApplyEachPatch(patch, this.source.get(), readPathValue, keyBy, entries, options, id, this)) {
-          this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: readPathValue });
+          if (this.traceEnabled) this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: readPathValue });
           return;
         }
         const collection = readPath(this.source.get(), readPathValue);
@@ -1756,7 +1855,7 @@ class DomRenderer implements FrontierDomRenderer {
           orderedEntries[i] = entry;
         }
         placeEachNodes(container, orderedEntries);
-        this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: readPathValue });
+        if (this.traceEnabled) this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: readPathValue });
       },
       dispose: () => {
         for (const [key, entry] of entries) {
@@ -1794,6 +1893,11 @@ class DomRenderer implements FrontierDomRenderer {
     const keyAttribute = options.keyAttribute ?? 'data-frontier-key';
     const entries = new Map<string, EachEntry<TNode>>();
     const spacers = createVirtualSpacers(container, options.spacer);
+    const orderedEntries: Array<EachEntry<TNode>> = [];
+    const createNode = options.create;
+    const updateNode = options.update;
+    const disposeNode = options.dispose;
+    let seenGeneration = 0;
 
     const id = this.nextId++;
     const record: BindingRecord = {
@@ -1807,21 +1911,153 @@ class DomRenderer implements FrontierDomRenderer {
       apply: (patch) => {
         const sourceValue = this.source.get();
         const collection = readPath(sourceValue, readPathValue);
+        const collectionTouched = patch === EMPTY_PATCH || patchTouchesCollection(patch, readPathValue);
+        const touchedIndexes = patch === EMPTY_PATCH || !collectionTouched ? null : collectCollectionTouchedIndexes(patch, readPathValue);
         const viewport = typeof options.viewport === 'function' ? options.viewport(this.source) : options.viewport;
-        const range = virtualize({
-          items: collection,
-          keyBy,
-          viewport,
-          layout: options.layout,
-          overscan: options.overscan,
-          overscanPx: options.overscanPx
-        });
-        const nextKeys = new Set<string>();
-        for (let i = 0; i < range.items.length; i++) nextKeys.add(range.items[i].key);
-
+        seenGeneration++;
+        let startIndex = 0;
+        let endIndex = 0;
+        let totalItems = 0;
+        let totalSize = 0;
+        let offsetBefore = 0;
+        let offsetAfter = 0;
+        const fixedSize = readVirtualFixedSize(options.layout);
+        if (fixedSize !== null && Array.isArray(collection)) {
+          const normalizedViewport = normalizeVirtualViewport(viewport);
+          totalItems = collection.length;
+          totalSize = totalItems * fixedSize;
+          const overscan = Math.max(0, Math.floor(options.overscan ?? 0));
+          const overscanPx = Math.max(0, options.overscanPx ?? 0);
+          const windowStart = Math.max(0, normalizedViewport.offset - overscanPx);
+          const windowEnd = Math.min(totalSize, normalizedViewport.offset + normalizedViewport.size + overscanPx);
+          startIndex = fixedSize > 0 ? Math.floor(windowStart / fixedSize) : 0;
+          endIndex = fixedSize > 0 ? Math.ceil(windowEnd / fixedSize) : 0;
+          startIndex = Math.max(0, Math.min(totalItems, startIndex) - overscan);
+          endIndex = Math.min(totalItems, Math.max(startIndex, Math.min(totalItems, endIndex) + overscan));
+          offsetBefore = startIndex * fixedSize;
+          offsetAfter = totalSize - endIndex * fixedSize;
+          orderedEntries.length = endIndex - startIndex;
+          for (let index = startIndex; index < endIndex; index++) {
+            const localIndex = index - startIndex;
+            const value = collection[index] as JsonValue | undefined;
+            const key = readItemKey(value, index, index, keyBy);
+            let entry = entries.get(key);
+            if (!entry) {
+              const context: FrontierDomEachItemContext = {
+                key,
+                index,
+                patch,
+                renderer: this,
+                source: this.source,
+                virtual: {
+                  offset: index * fixedSize,
+                  size: fixedSize,
+                  localIndex,
+                  totalItems,
+                  totalSize
+                }
+              };
+              entry = { key, index, node: createNode(value, context) };
+              setNodeKeyAttribute(entry.node, keyAttribute, key);
+              entries.set(key, entry);
+            } else {
+              entry.index = index;
+              if (updateNode !== undefined && collectionTouched && (touchedIndexes === null || numberArrayIncludes(touchedIndexes, index))) {
+                const context: FrontierDomEachItemContext = {
+                  key,
+                  index,
+                  patch,
+                  renderer: this,
+                  source: this.source,
+                  virtual: {
+                    offset: index * fixedSize,
+                    size: fixedSize,
+                    localIndex,
+                    totalItems,
+                    totalSize
+                  }
+                };
+                updateNode(entry.node, value, context);
+              }
+            }
+            entry.seen = seenGeneration;
+            const offset = index * fixedSize;
+            if (entry.offset !== offset || entry.size !== fixedSize) {
+              entry.offset = offset;
+              entry.size = fixedSize;
+              setVirtualNodeGeometry(entry.node, offset, fixedSize);
+            }
+            orderedEntries[localIndex] = entry;
+          }
+        } else {
+          const range = virtualize({
+            items: collection,
+            keyBy,
+            viewport,
+            layout: options.layout,
+            overscan: options.overscan,
+            overscanPx: options.overscanPx
+          });
+          startIndex = range.startIndex;
+          endIndex = range.endIndex;
+          totalItems = range.totalItems;
+          totalSize = range.totalSize;
+          offsetBefore = range.offsetBefore;
+          offsetAfter = range.offsetAfter;
+          orderedEntries.length = range.items.length;
+          for (let localIndex = 0; localIndex < range.items.length; localIndex++) {
+            const item = range.items[localIndex];
+            let entry = entries.get(item.key);
+            if (!entry) {
+              const context: FrontierDomEachItemContext = {
+                key: item.key,
+                index: item.index,
+                patch,
+                renderer: this,
+                source: this.source,
+                virtual: {
+                  offset: item.offset,
+                  size: item.size,
+                  localIndex,
+                  totalItems,
+                  totalSize
+                }
+              };
+              entry = { key: item.key, index: item.index, node: createNode(item.value, context) };
+              setNodeKeyAttribute(entry.node, keyAttribute, item.key);
+              entries.set(item.key, entry);
+            } else {
+              entry.index = item.index;
+              if (updateNode !== undefined && collectionTouched && (touchedIndexes === null || numberArrayIncludes(touchedIndexes, item.index))) {
+                const context: FrontierDomEachItemContext = {
+                  key: item.key,
+                  index: item.index,
+                  patch,
+                  renderer: this,
+                  source: this.source,
+                  virtual: {
+                    offset: item.offset,
+                    size: item.size,
+                    localIndex,
+                    totalItems,
+                    totalSize
+                  }
+                };
+                updateNode(entry.node, item.value, context);
+              }
+            }
+            entry.seen = seenGeneration;
+            if (entry.offset !== item.offset || entry.size !== item.size) {
+              entry.offset = item.offset;
+              entry.size = item.size;
+              setVirtualNodeGeometry(entry.node, item.offset, item.size);
+            }
+            orderedEntries[localIndex] = entry;
+          }
+        }
         for (const [key, entry] of entries) {
-          if (nextKeys.has(key)) continue;
-          options.dispose?.(entry.node, {
+          if (entry.seen === seenGeneration) continue;
+          disposeNode?.(entry.node, {
             key,
             index: -1,
             patch,
@@ -1831,51 +2067,23 @@ class DomRenderer implements FrontierDomRenderer {
           if (entry.node.parentNode === container) container.removeChild(entry.node);
           entries.delete(key);
         }
-
-        const orderedEntries = new Array<EachEntry<TNode>>(range.items.length);
-        for (let localIndex = 0; localIndex < range.items.length; localIndex++) {
-          const item = range.items[localIndex];
-          const context: FrontierDomEachItemContext = {
-            key: item.key,
-            index: item.index,
-            patch,
-            renderer: this,
-            source: this.source,
-            virtual: {
-              offset: item.offset,
-              size: item.size,
-              localIndex,
-              totalItems: range.totalItems,
-              totalSize: range.totalSize
-            }
-          };
-          let entry = entries.get(item.key);
-          if (!entry) {
-            entry = { key: item.key, index: item.index, node: options.create(item.value, context) };
-            setNodeKeyAttribute(entry.node, keyAttribute, item.key);
-            entries.set(item.key, entry);
-          } else {
-            entry.index = item.index;
-            options.update?.(entry.node, item.value, context);
-          }
-          setVirtualNodeGeometry(entry.node, item.offset, item.size);
-          orderedEntries[localIndex] = entry;
+        placeVirtualNodes(container, spacers, orderedEntries, offsetBefore, offsetAfter);
+        if (this.traceEnabled) {
+          this.trace({
+            kind: 'virtual-range',
+            bindingId: record.id,
+            bindingKind: 'virtualEach',
+            startIndex,
+            endIndex,
+            totalItems,
+            totalSize
+          });
+          this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: readPathValue });
         }
-        placeVirtualNodes(container, spacers, orderedEntries, range.offsetBefore, range.offsetAfter);
-        this.trace({
-          kind: 'virtual-range',
-          bindingId: record.id,
-          bindingKind: 'virtualEach',
-          startIndex: range.startIndex,
-          endIndex: range.endIndex,
-          totalItems: range.totalItems,
-          totalSize: range.totalSize
-        });
-        this.trace({ kind: 'dom-write', bindingId: record.id, bindingKind: record.kind, path: readPathValue });
       },
       dispose: () => {
         for (const [key, entry] of entries) {
-          options.dispose?.(entry.node, {
+          disposeNode?.(entry.node, {
             key,
             index: -1,
             patch: EMPTY_PATCH,
@@ -1970,7 +2178,7 @@ class DomRenderer implements FrontierDomRenderer {
       paths: [bindingPath],
       apply: (patch) => {
         const patchValue = patch === EMPTY_PATCH ? PATCH_VALUE_NOT_FOUND : readPatchAssignedValueResult(patch, bindingPath);
-        const value = patchValue === PATCH_VALUE_NOT_FOUND ? readPath(this.source.get(), bindingPath) : patchValue.value;
+        const value = patchValue === PATCH_VALUE_NOT_FOUND ? readPath(this.source.get(), bindingPath) : materializePatchValue(patchValue);
         if (patch !== EMPTY_PATCH && equals(record.previous, value)) return;
         record.previous = value;
         write(record, value, patch);
@@ -1985,22 +2193,24 @@ class DomRenderer implements FrontierDomRenderer {
 
   private markDirty(record: BindingRecord, patch: Patch): void {
     if (!record.active || this.disposed) return;
-    this.trace({
-      kind: 'patch',
-      phase: 'watch',
-      bindingId: record.id,
-      bindingKind: record.kind,
-      paths: record.paths,
-      patchItems: patch.length,
-      patch
-    });
-    this.trace({
-      kind: 'binding-dirty',
-      bindingId: record.id,
-      bindingKind: record.kind,
-      patchItems: patch.length,
-      paths: record.paths
-    });
+    if (this.traceEnabled) {
+      this.trace({
+        kind: 'patch',
+        phase: 'watch',
+        bindingId: record.id,
+        bindingKind: record.kind,
+        paths: record.paths,
+        patchItems: patch.length,
+        patch
+      });
+      this.trace({
+        kind: 'binding-dirty',
+        bindingId: record.id,
+        bindingKind: record.kind,
+        patchItems: patch.length,
+        paths: record.paths
+      });
+    }
     if (this.scheduler.sync) {
       record.apply(patch.length === 0 ? EMPTY_PATCH : patch);
       return;
@@ -2113,8 +2323,234 @@ function formatAttributeValue(value: JsonValue | undefined): string {
   return value === null || value === undefined ? '' : String(value);
 }
 
+function formatDomTemplateValue(value: unknown): string {
+  return value === null || value === undefined ? '' : String(value);
+}
+
 function shouldRemoveAttribute(value: JsonValue | undefined): boolean {
   return value === null || value === undefined || value === false;
+}
+
+function readHtmlTemplateRoot(
+  html: string,
+  options: FrontierDomHtmlTemplateOptions,
+  context: FrontierDomEachItemContext,
+  roots: WeakMap<Document, Node>
+): Node {
+  const doc = options.document ?? readTemplateContextDocument(context);
+  const cached = roots.get(doc);
+  if (cached) return cached;
+  const template = doc.createElement('template');
+  template.innerHTML = html.trim();
+  const root = options.root
+    ? resolveHtmlTemplateSelector(template.content, options.root)
+    : readSingleHtmlTemplateRoot(template.content);
+  if (!root) {
+    throw new TypeError('frontier-dom html template root was not found');
+  }
+  roots.set(doc, root);
+  return root;
+}
+
+function readTemplateContextDocument(context: FrontierDomEachItemContext): Document {
+  const target = context.renderer.target;
+  if (target && typeof (target as Node).nodeType === 'number') {
+    if ((target as Node).nodeType === 9) return target as Document;
+    const ownerDocument = (target as Node).ownerDocument;
+    if (ownerDocument) return ownerDocument;
+  }
+  return readGlobalDocument();
+}
+
+function readSingleHtmlTemplateRoot(fragment: DocumentFragment): Node | null {
+  let root: Node | null = null;
+  const children = fragment.childNodes;
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    if (child.nodeType === 3 && child.textContent?.trim() === '') continue;
+    if (child.nodeType === 8) continue;
+    if (root) {
+      throw new TypeError('frontier-dom html template must have one root node or an options.root selector');
+    }
+    root = child;
+  }
+  return root;
+}
+
+function compileHtmlTemplateBindings(
+  bindings: readonly FrontierDomHtmlTemplateBinding[]
+): CompiledHtmlTemplateBinding[] {
+  const compiled = new Array<CompiledHtmlTemplateBinding>(bindings.length);
+  for (let i = 0; i < bindings.length; i++) {
+    const binding = bindings[i];
+    const attr = compileHtmlTemplateOperations(binding.attr);
+    const prop = compileHtmlTemplateOperations(binding.prop);
+    const style = compileHtmlTemplateOperations(binding.style);
+    const classOperations = mergeHtmlTemplateOperations(
+      compileHtmlTemplateOperations(binding.class),
+      compileHtmlTemplateOperations(binding.className)
+    );
+    compiled[i] = {
+      selector: binding.selector,
+      text: binding.text,
+      attr,
+      prop,
+      class: classOperations,
+      style,
+      requiresElement: Boolean(attr || prop || classOperations || style)
+    };
+  }
+  return compiled;
+}
+
+function compileHtmlTemplateOperations(
+  values: Record<string, FrontierDomHtmlTemplateValue> | undefined
+): HtmlTemplateValueOperation[] | undefined {
+  if (!values) return undefined;
+  const names = Object.keys(values);
+  const operations = new Array<HtmlTemplateValueOperation>(names.length);
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    operations[i] = { name, value: values[name] };
+  }
+  return operations;
+}
+
+function mergeHtmlTemplateOperations(
+  first: HtmlTemplateValueOperation[] | undefined,
+  second: HtmlTemplateValueOperation[] | undefined
+): HtmlTemplateValueOperation[] | undefined {
+  if (!first) return second;
+  if (!second) return first;
+  return first.concat(second);
+}
+
+function resolveHtmlTemplateBindings(
+  root: Node,
+  bindings: readonly CompiledHtmlTemplateBinding[]
+): ResolvedHtmlTemplateBinding[] {
+  const resolved = new Array<ResolvedHtmlTemplateBinding>(bindings.length);
+  for (let i = 0; i < bindings.length; i++) {
+    const binding = bindings[i];
+    const target = binding.selector ? resolveHtmlTemplateSelector(root, binding.selector) : root;
+    if (!target) throw new TypeError('frontier-dom html template selector was not found: ' + binding.selector);
+    assertHtmlTemplateBindingTarget(target, binding);
+    resolved[i] = { binding, target };
+  }
+  return resolved;
+}
+
+function resolveHtmlTemplateSelector(root: ParentNode | Node, selector: string): Node | null {
+  if (isElementLike(root) && typeof root.matches === 'function' && root.matches(selector)) return root;
+  if (isParentNodeLike(root)) return root.querySelector(selector);
+  return null;
+}
+
+function assertHtmlTemplateBindingTarget(target: Node, binding: CompiledHtmlTemplateBinding): void {
+  if (!isElementLike(target) && binding.requiresElement) {
+    throw new TypeError('frontier-dom html template element binding requires an element target');
+  }
+}
+
+function applyHtmlTemplateBindings(
+  bindings: readonly ResolvedHtmlTemplateBinding[],
+  value: JsonValue | undefined,
+  context: FrontierDomEachItemContext
+): void {
+  for (let i = 0; i < bindings.length; i++) {
+    const { binding, target } = bindings[i];
+    if (binding.text !== undefined) {
+      setTextContent(target, formatDomTemplateValue(readHtmlTemplateValue(value, context, binding.text)));
+    }
+    if (!isElementLike(target)) continue;
+    applyHtmlTemplateAttributes(target, value, context, binding.attr);
+    applyHtmlTemplateProperties(target, value, context, binding.prop);
+    applyHtmlTemplateClasses(target, value, context, binding.class);
+    applyHtmlTemplateStyles(target as HTMLElement | SVGElement, value, context, binding.style);
+  }
+}
+
+function setTextContent(target: Node, value: string): void {
+  if (target.textContent !== value) target.textContent = value;
+}
+
+function applyHtmlTemplateAttributes(
+  element: Element,
+  value: JsonValue | undefined,
+  context: FrontierDomEachItemContext,
+  attributes: HtmlTemplateValueOperation[] | undefined
+): void {
+  if (!attributes) return;
+  for (let i = 0; i < attributes.length; i++) {
+    const operation = attributes[i];
+    const name = operation.name;
+    const next = readHtmlTemplateValue(value, context, operation.value);
+    if (next === null || next === undefined || next === false) {
+      if (element.hasAttribute(name)) element.removeAttribute(name);
+    } else {
+      const formatted = next === true ? '' : String(next);
+      if (element.getAttribute(name) !== formatted) element.setAttribute(name, formatted);
+    }
+  }
+}
+
+function applyHtmlTemplateProperties(
+  element: Element,
+  value: JsonValue | undefined,
+  context: FrontierDomEachItemContext,
+  properties: HtmlTemplateValueOperation[] | undefined
+): void {
+  if (!properties) return;
+  const target = element as unknown as Record<string, unknown>;
+  for (let i = 0; i < properties.length; i++) {
+    const operation = properties[i];
+    const name = operation.name;
+    const next = readHtmlTemplateValue(value, context, operation.value);
+    if (target[name] !== next) target[name] = next;
+  }
+}
+
+function applyHtmlTemplateClasses(
+  element: Element,
+  value: JsonValue | undefined,
+  context: FrontierDomEachItemContext,
+  classes: HtmlTemplateValueOperation[] | undefined
+): void {
+  if (!classes) return;
+  for (let i = 0; i < classes.length; i++) {
+    const operation = classes[i];
+    element.classList.toggle(operation.name, Boolean(readHtmlTemplateValue(value, context, operation.value)));
+  }
+}
+
+function applyHtmlTemplateStyles(
+  element: HTMLElement | SVGElement,
+  value: JsonValue | undefined,
+  context: FrontierDomEachItemContext,
+  styles: HtmlTemplateValueOperation[] | undefined
+): void {
+  if (!styles) return;
+  for (let i = 0; i < styles.length; i++) {
+    const operation = styles[i];
+    const next = readHtmlTemplateValue(value, context, operation.value);
+    if (next === null || next === undefined || next === false) element.style.removeProperty(operation.name);
+    else element.style.setProperty(operation.name, String(next));
+  }
+}
+
+function readHtmlTemplateValue(
+  value: JsonValue | undefined,
+  context: FrontierDomEachItemContext,
+  spec: FrontierDomHtmlTemplateValue
+): unknown {
+  if (typeof spec === 'function') return spec(value, context);
+  if (typeof spec === 'number') return readPath(value, [spec]);
+  if (Array.isArray(spec)) return readPath(value, spec.slice() as JsonPath);
+  const path = spec as string;
+  if (path === '') return value;
+  if (path.charCodeAt(0) === 47) return readPath(value, getCachedPointerPath(path));
+  if (path.indexOf('.') !== -1) return readPath(value, path.split('.'));
+  return readPath(value, [path]);
 }
 
 function isTextNode(target: Text | Element): target is Text {
@@ -3107,6 +3543,21 @@ function setVirtualNodeGeometry(node: Node, offset: number, size: number): void 
   }
 }
 
+function readVirtualFixedSize(layout: FrontierVirtualLayoutProvider): number | null {
+  if (layout.kind !== 'fixed') return null;
+  const size = layout.defaultSize;
+  return Number.isFinite(size) && size >= 0 ? size as number : null;
+}
+
+function normalizeVirtualViewport(viewport: FrontierVirtualViewport): FrontierVirtualViewport {
+  return {
+    offset: Math.max(0, viewport.offset || 0),
+    size: Math.max(0, viewport.size || 0),
+    crossOffset: Math.max(0, viewport.crossOffset || 0),
+    crossSize: viewport.crossSize === undefined ? undefined : Math.max(0, viewport.crossSize || 0)
+  };
+}
+
 function rootContains(root: ParentNode, node: Node): boolean {
   return root === node || (typeof root.contains === 'function' && root.contains(node));
 }
@@ -3208,6 +3659,47 @@ function collectEachTouchedIndexes(op: Patch[number], readPathValue: JsonPath): 
   return null;
 }
 
+function patchOpTouchesCollection(op: Patch[number], readPathValue: JsonPath): boolean {
+  if (op[0] === OP_ARRAY_OBJECT_FIELD_ASSIGN || op[0] === OP_ARRAY_SPLICE) {
+    return samePath(op[1], readPathValue);
+  }
+  if (op[0] === OP_SET || op[0] === OP_REMOVE) {
+    const path = op[1];
+    return samePathPrefix(path, readPathValue) || samePathPrefix(readPathValue, path);
+  }
+  return true;
+}
+
+function patchTouchesCollection(patch: Patch, readPathValue: JsonPath): boolean {
+  for (let i = 0; i < patch.length; i++) {
+    if (patchOpTouchesCollection(patch[i], readPathValue)) return true;
+  }
+  return false;
+}
+
+function collectCollectionTouchedIndexes(patch: Patch, readPathValue: JsonPath): number[] | null {
+  let touched: number[] | null = null;
+  for (let i = 0; i < patch.length; i++) {
+    const op = patch[i];
+    if (!patchOpTouchesCollection(op, readPathValue)) continue;
+    const next = collectEachTouchedIndexes(op, readPathValue);
+    if (next === null) return null;
+    if (touched === null) touched = next;
+    else {
+      for (let j = 0; j < next.length; j++) touched[touched.length] = next[j];
+    }
+  }
+  if (touched !== null) dedupeNumberArrayInPlace(touched);
+  return touched;
+}
+
+function numberArrayIncludes(values: number[], value: number): boolean {
+  for (let i = 0; i < values.length; i++) {
+    if (values[i] === value) return true;
+  }
+  return false;
+}
+
 function readCollectionIndex(collection: JsonValue | undefined, index: number): JsonValue | undefined {
   return Array.isArray(collection) ? collection[index] : undefined;
 }
@@ -3224,17 +3716,17 @@ function dedupeNumberArrayInPlace(values: number[]): void {
 
 export function readPatchAssignedValue(patch: Patch, path: WatchPath): JsonValue | undefined {
   const result = readPatchAssignedValueResult(patch, normalizePath(path));
-  return result === PATCH_VALUE_NOT_FOUND ? undefined : result.value;
+  return result === PATCH_VALUE_NOT_FOUND ? undefined : materializePatchValue(result);
 }
 
 function readPatchAssignedValueResult(
   patch: Patch,
   targetPath: JsonPath
-): { value: JsonValue | undefined } | typeof PATCH_VALUE_NOT_FOUND {
+): JsonValue | typeof PATCH_VALUE_NOT_FOUND | typeof PATCH_VALUE_UNDEFINED {
   for (let i = patch.length - 1; i >= 0; i--) {
     const op = patch[i];
-    if (op[0] === OP_SET && samePath(op[1], targetPath)) return { value: op[2] };
-    if (op[0] === OP_REMOVE && samePath(op[1], targetPath)) return { value: undefined };
+    if (op[0] === OP_SET && samePath(op[1], targetPath)) return op[2] === undefined ? PATCH_VALUE_UNDEFINED : op[2];
+    if (op[0] === OP_REMOVE && samePath(op[1], targetPath)) return PATCH_VALUE_UNDEFINED;
     if (op[0] === OP_ARRAY_OBJECT_FIELD_ASSIGN) {
       const basePath = op[1];
       const relative = targetPath.slice(basePath.length);
@@ -3247,13 +3739,20 @@ function readPatchAssignedValueResult(
       for (let row = indexes.length - 1; row >= 0; row--) {
         if (indexes[row] !== rowIndex) continue;
         for (let field = fields.length - 1; field >= 0; field--) {
-          if (samePath(fields[field], fieldPath)) return { value: values[row * fields.length + field] as JsonValue };
+          if (samePath(fields[field], fieldPath)) {
+            const value = values[row * fields.length + field] as JsonValue | undefined;
+            return value === undefined ? PATCH_VALUE_UNDEFINED : value;
+          }
         }
       }
     }
-    if (op[0] === OP_ARRAY_SPLICE && samePath(op[1], targetPath)) return { value: undefined };
+    if (op[0] === OP_ARRAY_SPLICE && samePath(op[1], targetPath)) return PATCH_VALUE_UNDEFINED;
   }
   return PATCH_VALUE_NOT_FOUND;
+}
+
+function materializePatchValue(value: JsonValue | typeof PATCH_VALUE_UNDEFINED): JsonValue | undefined {
+  return value === PATCH_VALUE_UNDEFINED ? undefined : value;
 }
 
 function samePath(left: JsonPath, right: JsonPath): boolean {

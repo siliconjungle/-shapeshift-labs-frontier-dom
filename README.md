@@ -85,7 +85,7 @@ The main product-facing API is JSX-first:
 ```
 
 ```tsx
-import { createApp, fromStateEngine } from '@shapeshift-labs/frontier-dom';
+import { createApp, createHtmlTemplate, fromStateEngine } from '@shapeshift-labs/frontier-dom';
 import { createActionRegistry } from '@shapeshift-labs/frontier-mutation';
 import { each, fixedLayout, text, virtualEach, when } from '@shapeshift-labs/frontier-dom/jsx-runtime';
 
@@ -96,16 +96,18 @@ const app = createApp({
   target: '#app',
   actionRegistry: actions,
   templates: {
-    'todo-row.v1': {
-      create(todo) {
-        const item = document.createElement('li');
-        item.textContent = String(todo?.text ?? '');
-        return item;
-      },
-      update(item, todo) {
-        item.textContent = String(todo?.text ?? '');
-      }
-    },
+    'todo-row.v1': createHtmlTemplate(
+      '<li><span data-part="text"></span><input data-part="done" type="checkbox"></li>',
+      [
+        { selector: '[data-part="text"]', text: 'text' },
+        {
+          selector: '[data-part="done"]',
+          prop: { checked: 'done' },
+          attr: { 'aria-checked': (todo) => (todo?.done ? 'true' : 'false') },
+          class: { 'is-done': 'done' }
+        }
+      ]
+    ),
     'signed-in.v1': { create: renderSignedInPanel },
     'signed-out.v1': { create: renderSignedOutPanel },
     'message-row.v1': { create: renderMessage }
@@ -214,7 +216,7 @@ renderer.when('/session/userId', {
 Durable DOM state should use a serializable manifest plus an app registry for local functions:
 
 ```ts
-import { hydrateDomRenderer } from '@shapeshift-labs/frontier-dom';
+import { createHtmlTemplate, hydrateDomRenderer } from '@shapeshift-labs/frontier-dom';
 
 hydrateDomRenderer({
   source: fromStateEngine(state),
@@ -245,13 +247,9 @@ hydrateDomRenderer({
     ]
   },
   templates: {
-    'todo-row.v1': {
-      create(todo) {
-        const item = document.createElement('li');
-        item.textContent = String(todo?.text ?? '');
-        return item;
-      }
-    }
+    'todo-row.v1': createHtmlTemplate('<li><span data-part="text"></span></li>', [
+      { selector: '[data-part="text"]', text: 'text' }
+    ])
   },
   actions: {
     'todo.add': ({ source }) => {
@@ -262,6 +260,8 @@ hydrateDomRenderer({
   actionRegistry: actions
 });
 ```
+
+`createHtmlTemplate()` is the concrete template bridge for manifest bindings. It parses the HTML once per document, clones a single root node for each materialized item, and applies path bindings on create/update. Binding values can be row-relative paths (`'text'`, `'/done'`, `['author', 'name']`) or functions that receive the row value and item context.
 
 `actionRegistry` is structural, so it can be a `@shapeshift-labs/frontier-mutation` action registry or an app-owned adapter with the same `dispatch(actionId, input, options)` method. JSX `$action` compiles to a manifest event binding, and `$payload` reads state paths into the dispatched input while recording those paths as provenance reads. Manifest events use local `actions` first, then fall back to the registry; local action handlers that call `source.commitPatch()` are bridged through `actionRegistry.commitPatch()` when present so the patch keeps the same cause/action metadata.
 

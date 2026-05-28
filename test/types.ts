@@ -4,6 +4,7 @@ import {
   createDomSchedulerFromRuntime,
   createDomRenderer,
   createDomRendererFromManifest,
+  createHtmlTemplate,
   deserializeDomState,
   fromStateEngine,
   readPatchAssignedValue,
@@ -76,6 +77,20 @@ const textNode = document.createTextNode('');
 const input = document.createElement('input');
 const list = document.createElement('ul');
 const slot = document.createElement('section');
+const htmlTemplate = createHtmlTemplate(
+  '<li><span data-part="text"></span><input data-part="done" type="checkbox"></li>',
+  [
+    { selector: '[data-part="text"]', text: 'text' },
+    {
+      selector: '[data-part="done"]',
+      prop: { checked: 'done' },
+      attr: { 'aria-checked': 'done' },
+      class: { 'is-done': 'done' },
+      style: { color: () => 'red' }
+    }
+  ],
+  { document }
+);
 
 const textBinding: FrontierDomBinding = renderer.text('/user/name', textNode);
 const attrBinding = renderer.attr(['user', 'name'], target, 'data-name');
@@ -190,6 +205,7 @@ const manifestRenderer = createDomRendererFromManifest({
         return document.createElement('li');
       }
     },
+    htmlTodo: htmlTemplate,
     visible: {
       create() {
         return document.createElement('strong');

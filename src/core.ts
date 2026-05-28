@@ -204,6 +204,7 @@ type EachEntry<TTarget> = {
 const EMPTY_PATCH: Patch = [];
 const DEFAULT_TRACE_LIMIT = 2048;
 const PATCH_VALUE_NOT_FOUND = Symbol('frontierPatchValueNotFound');
+const PATCH_VALUE_UNDEFINED = Symbol('frontierPatchValueUndefined');
 let nextPatchSchedulerAdapterId = 1;
 
 export function createPatchRenderer(options: FrontierPatchRendererOptions): FrontierPatchRenderer {
@@ -303,18 +304,18 @@ class PatchRenderer implements FrontierPatchRenderer {
       pendingPatch: [],
       paths: [path],
       apply: (patch) => {
-        const sourceValue = this.source.get();
         const direct = patch === EMPTY_PATCH ? PATCH_VALUE_NOT_FOUND : readPatchAssignedValueResult(patch, path);
-        const value = options.read
-          ? options.read(sourceValue, path, patch)
-          : direct === PATCH_VALUE_NOT_FOUND
-            ? readPath(sourceValue, path)
-            : direct.value;
+        let value: JsonValue | undefined;
+        if (options.read) {
+          value = options.read(this.source.get(), path, patch);
+        } else {
+          value = direct === PATCH_VALUE_NOT_FOUND ? readPath(this.source.get(), path) : materializePatchValue(direct);
+        }
         if (patch !== EMPTY_PATCH && equals(previous, value)) return;
         const before = previous;
         previous = value;
         options.apply({ value, previous: before, path, patch, source: this.source, renderer: this });
-        this.trace({ kind: 'host-write', bindingId: id, bindingName: options.name, bindingKind: 'value', path });
+        if (this.traceEnabled) this.trace({ kind: 'host-write', bindingId: id, bindingName: options.name, bindingKind: 'value', path });
       }
     };
     this.records.set(id, record);
@@ -340,11 +341,11 @@ class PatchRenderer implements FrontierPatchRenderer {
       paths: [readPathValue],
       apply: (patch) => {
         if (patch !== EMPTY_PATCH && tryApplyEachPatch(patch, this.source.get(), readPathValue, keyBy, entries, options, this)) {
-          this.trace({ kind: 'host-write', bindingId: id, bindingName: options.name, bindingKind: 'each', path: readPathValue });
+          if (this.traceEnabled) this.trace({ kind: 'host-write', bindingId: id, bindingName: options.name, bindingKind: 'each', path: readPathValue });
           return;
         }
         reconcileEach(this.source.get(), readPathValue, keyBy, entries, options, patch, this);
-        this.trace({ kind: 'host-write', bindingId: id, bindingName: options.name, bindingKind: 'each', path: readPathValue });
+        if (this.traceEnabled) this.trace({ kind: 'host-write', bindingId: id, bindingName: options.name, bindingKind: 'each', path: readPathValue });
       },
       dispose: () => {
         for (const [key, entry] of entries) {
@@ -396,7 +397,7 @@ class PatchRenderer implements FrontierPatchRenderer {
             for (let i = callbacks.length - 1; i >= 0; i--) callbacks[i]();
           };
         }
-        this.trace({ kind: 'host-write', bindingId: id, bindingKind: 'effect', path: readPaths[0] ?? [] });
+        if (this.traceEnabled) this.trace({ kind: 'host-write', bindingId: id, bindingKind: 'effect', path: readPaths[0] ?? [] });
       },
       dispose: () => {
         if (cleanup !== null) cleanup();
@@ -443,13 +444,15 @@ class PatchRenderer implements FrontierPatchRenderer {
 
   private markDirty(record: BindingRecord, patch: Patch): void {
     if (!record.active || this.disposed) return;
-    this.trace({
-      kind: 'binding-dirty',
-      bindingId: record.id,
-      bindingName: record.name,
-      bindingKind: record.kind,
-      patchItems: patch.length
-    });
+    if (this.traceEnabled) {
+      this.trace({
+        kind: 'binding-dirty',
+        bindingId: record.id,
+        bindingName: record.name,
+        bindingKind: record.kind,
+        patchItems: patch.length
+      });
+    }
     if (this.scheduler.sync) {
       record.apply(patch.length === 0 ? EMPTY_PATCH : patch);
       return;
@@ -674,11 +677,11 @@ function readItemKey(
 function readPatchAssignedValueResult(
   patch: Patch,
   targetPath: JsonPath
-): { value: JsonValue | undefined } | typeof PATCH_VALUE_NOT_FOUND {
+): JsonValue | typeof PATCH_VALUE_NOT_FOUND | typeof PATCH_VALUE_UNDEFINED {
   for (let i = patch.length - 1; i >= 0; i--) {
     const op = patch[i];
-    if (op[0] === OP_SET && samePath(op[1], targetPath)) return { value: op[2] };
-    if (op[0] === OP_REMOVE && samePath(op[1], targetPath)) return { value: undefined };
+    if (op[0] === OP_SET && samePath(op[1], targetPath)) return op[2] === undefined ? PATCH_VALUE_UNDEFINED : op[2];
+    if (op[0] === OP_REMOVE && samePath(op[1], targetPath)) return PATCH_VALUE_UNDEFINED;
     if (op[0] === OP_ARRAY_OBJECT_FIELD_ASSIGN) {
       const basePath = op[1];
       const relative = targetPath.slice(basePath.length);
@@ -691,13 +694,20 @@ function readPatchAssignedValueResult(
       for (let row = indexes.length - 1; row >= 0; row--) {
         if (indexes[row] !== rowIndex) continue;
         for (let field = fields.length - 1; field >= 0; field--) {
-          if (samePath(fields[field], fieldPath)) return { value: values[row * fields.length + field] as JsonValue };
+          if (samePath(fields[field], fieldPath)) {
+            const value = values[row * fields.length + field] as JsonValue | undefined;
+            return value === undefined ? PATCH_VALUE_UNDEFINED : value;
+          }
         }
       }
     }
-    if (op[0] === OP_ARRAY_SPLICE && samePath(op[1], targetPath)) return { value: undefined };
+    if (op[0] === OP_ARRAY_SPLICE && samePath(op[1], targetPath)) return PATCH_VALUE_UNDEFINED;
   }
   return PATCH_VALUE_NOT_FOUND;
+}
+
+function materializePatchValue(value: JsonValue | typeof PATCH_VALUE_UNDEFINED): JsonValue | undefined {
+  return value === PATCH_VALUE_UNDEFINED ? undefined : value;
 }
 
 function dedupeNumberArrayInPlace(values: number[]): void {

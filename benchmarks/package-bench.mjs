@@ -33,7 +33,8 @@ const results = [
   measureFrustumCull(rows),
   measureCreateAppRuntimeMount(Math.min(rows, 1000)),
   await measureCompileFrontierJsx(),
-  await measureCreateAppCompiledMount(Math.min(rows, 1000))
+  await measureCreateAppCompiledMount(Math.min(rows, 1000)),
+  await measureCreateAppCompiledTextBindingsMount(Math.min(rows, 1000))
 ];
 
 const report = {
@@ -440,6 +441,28 @@ async function measureCreateAppCompiledMount(rowCount) {
   return summarize('createApp compiled TSX hydrate, ' + rowCount + ' rows', samples, rowCount);
 }
 
+async function measureCreateAppCompiledTextBindingsMount(rowCount) {
+  const { compileFrontierJsx } = await import('../dist/compiler.js');
+  const compiled = await compileFrontierJsx(createCompiledTextBindingsSource(rowCount), { entry: 'App' });
+  const samples = [];
+  for (let round = 0; round < rounds; round++) {
+    const dom = new JSDOM('<!doctype html><div id="app"></div>');
+    const target = dom.window.document.getElementById('app');
+    const state = createStateEngine({ rows: makeRows(rowCount) });
+    const app = createApp({
+      source: fromStateEngine(state),
+      target
+    });
+    const start = performance.now();
+    app.mount(compiled);
+    samples[samples.length] = (performance.now() - start) * 1000;
+    sink += target.querySelector('[data-frontier-id="row-' + Math.floor(rowCount / 2) + '"]').textContent.length;
+    app.dispose();
+    dom.window.close();
+  }
+  return summarize('createApp compiled TSX text bindings, ' + rowCount + ' rows', samples, rowCount);
+}
+
 function createTextFixture(rowCount, trace) {
   const dom = new JSDOM('<!doctype html><div></div>');
   const fragment = dom.window.document.createDocumentFragment();
@@ -520,6 +543,14 @@ function createCompiledBenchSource() {
       );
     }
   `;
+}
+
+function createCompiledTextBindingsSource(rowCount) {
+  let children = '';
+  for (let i = 0; i < rowCount; i++) {
+    children += '<span frId="row-' + i + '" $text="/rows/' + i + '/text" />';
+  }
+  return 'function App() { return <main frId="text-bindings">' + children + '</main>; }';
 }
 
 function restoreGlobalDocument(previousDocument) {
