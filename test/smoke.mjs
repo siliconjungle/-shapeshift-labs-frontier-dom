@@ -19,7 +19,7 @@ import {
 } from '../dist/index.js';
 import { createPatchRenderer, createPatchSchedulerFromRuntime, fromStateEngine as fromStateEngineForPatchRenderer } from '../dist/core.js';
 import { compileFrontierJsx } from '../dist/compiler.js';
-import { createDomDevtoolsSink, inspectDomRenderer } from '../dist/devtools.js';
+import { createDomDevtoolsInspector, createDomDevtoolsSink, inspectDomApp, inspectDomRenderer } from '../dist/devtools.js';
 import { createRenderLogSink } from '../dist/logging.js';
 import { parseDomHydrationScript, renderDomHydrationScript, streamDomHydrationScript } from '../dist/ssr.js';
 import { compileFrontierDomBuildEntries, frontierDomVite, renderFrontierDomHydrationModule } from '../dist/vite.js';
@@ -1096,6 +1096,66 @@ function runSsrAndDevtoolsSmoke() {
   assert.strictEqual(sink.snapshot().trace.length, 2);
   const rendererLike = { size: 1, getTrace: () => sink.snapshot().trace };
   assert.strictEqual(inspectDomRenderer(rendererLike).size, 1);
+
+  const inspector = createDomDevtoolsInspector({ limit: 16 });
+  inspector({ kind: 'binding-create', bindingId: 2, bindingKind: 'virtualEach', paths: [['todos']] });
+  inspector({ kind: 'patch', phase: 'watch', bindingId: 2, bindingKind: 'virtualEach', patchItems: 1, patch: [[0, ['todos', 0, 'text'], 'Ada']], paths: [['todos']] });
+  inspector({ kind: 'binding-dirty', bindingId: 2, bindingKind: 'virtualEach', patchItems: 1, paths: [['todos']] });
+  inspector({ kind: 'virtual-range', bindingId: 2, bindingKind: 'virtualEach', startIndex: 0, endIndex: 1, totalItems: 2, totalSize: 48 });
+  inspector({ kind: 'dom-write', bindingId: 2, bindingKind: 'virtualEach', path: ['todos'] });
+  inspector({
+    kind: 'action-dispatch',
+    actionId: 'todo.toggle',
+    causeId: 'frontier-dom:a:toggle:click',
+    manifestBindingId: 'a:toggle',
+    event: 'click',
+    input: { id: 'a' },
+    reads: [['todos', 0, 'id']],
+    affected: ['dom.binding:a:toggle']
+  });
+  inspector({
+    kind: 'hydration',
+    report: {
+      issues: [],
+      reusedAnchors: ['user'],
+      missingAnchors: [],
+      staleAnchors: [],
+      rematerializedAnchors: [],
+      source: { expected: { basis: 1 }, actual: { basis: 1 } },
+      snapshotMatched: true
+    }
+  });
+  const actionRegistry = {
+    history() {
+      return [{
+        id: 'record-1',
+        actionId: 'todo.toggle',
+        causeId: 'frontier-dom:a:toggle:click',
+        status: 'ok',
+        reads: [['todos', 0, 'id']],
+        writes: [['todos', 0, 'done']],
+        patch: [[0, ['todos', 0, 'done'], true]],
+        affected: ['dom.binding:a:toggle'],
+        durationMs: 1
+      }];
+    }
+  };
+  const snapshot = inspector.snapshot({ actionRegistry });
+  assert.strictEqual(snapshot.summary.patchCount, 1);
+  assert.strictEqual(snapshot.summary.dirtyBindingCount, 1);
+  assert.strictEqual(snapshot.summary.domWriteCount, 1);
+  assert.strictEqual(snapshot.summary.virtualRangeCount, 1);
+  assert.strictEqual(snapshot.summary.actionCount, 2);
+  assert.strictEqual(snapshot.summary.hydrationIssueCount, 0);
+  assert.deepStrictEqual(snapshot.dirtyBindings[0].paths, ['/todos']);
+
+  const inspectedApp = inspectDomApp({
+    renderer: rendererLike,
+    source: { get: () => ({ user: { name: 'Ada' } }), watch: () => ({ unsubscribe() {} }) },
+    hydrationReport: snapshot.hydration
+  }, { includeStateSnapshot: true });
+  assert.strictEqual(inspectedApp.hydration.snapshotMatched, true);
+  assert.deepStrictEqual(inspectedApp.source.snapshot, { user: { name: 'Ada' } });
   dom.window.close();
 }
 

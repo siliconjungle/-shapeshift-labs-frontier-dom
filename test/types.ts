@@ -23,7 +23,13 @@ import {
   type FrontierPatchWorkSchedulerTask
 } from '../dist/core.js';
 import { compileFrontierJsx, type FrontierJsxCompileResult } from '../dist/compiler.js';
-import { createDomDevtoolsSink, inspectDomRenderer } from '../dist/devtools.js';
+import {
+  createDomDevtoolsInspector,
+  createDomDevtoolsSink,
+  inspectDomApp,
+  inspectDomRenderer,
+  type FrontierDomDevtoolsSnapshot
+} from '../dist/devtools.js';
 import { createRenderLogSink } from '../dist/logging.js';
 import { createHydrationBasisEnvelope, renderDomStateScript, streamDomHydrationScript } from '../dist/ssr.js';
 import { frontierDomVite, renderFrontierDomHydrationModule, type FrontierDomBuildOptions } from '../dist/vite.js';
@@ -336,7 +342,21 @@ const trace = createRenderLogSink(logger);
 trace({ kind: 'binding-dispose', bindingId: 1, bindingKind: 'text' });
 const devtoolsSink = createDomDevtoolsSink();
 devtoolsSink({ kind: 'binding-dispose', bindingId: 1, bindingKind: 'text' });
+devtoolsSink({ kind: 'patch', phase: 'commit', patchItems: 1, patch, actionId: 'save', causeId: 'test' });
+devtoolsSink({
+  kind: 'action-dispatch',
+  actionId: 'save',
+  causeId: 'click:save',
+  manifestBindingId: 'a:save',
+  event: 'click',
+  input: { id: 'a' },
+  reads: [['todos', 0, 'id']],
+  affected: ['dom.binding:a:save']
+});
+const devtoolsInspector = createDomDevtoolsInspector({ renderer, actionRegistry: { history: () => [] } });
+const inspectedDevtools: FrontierDomDevtoolsSnapshot = devtoolsInspector.inspect({ includeStateSnapshot: true });
 const inspected = inspectDomRenderer(renderer);
+const inspectedApp = inspectDomApp({ renderer, source, hydrationReport: null });
 const basis = createHydrationBasisEnvelope({ manifest, source });
 const script = renderDomStateScript({ manifest, source }, { id: 'frontier-state' });
 const chunks = Array.from(streamDomHydrationScript(serialized));
@@ -392,7 +412,10 @@ void frustum;
 void tree;
 void windowed;
 void devtoolsSink;
+void devtoolsInspector;
+void inspectedDevtools;
 void inspected;
+void inspectedApp;
 void basis;
 void script;
 void chunks;

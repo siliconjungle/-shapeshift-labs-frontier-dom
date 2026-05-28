@@ -114,6 +114,21 @@ export type FrontierDomTraceSink = (event: FrontierDomTraceEvent) => void;
 
 export type FrontierDomTraceEvent =
   | {
+      kind: 'patch';
+      phase: 'commit' | 'watch';
+      patchItems: number;
+      patch: Patch;
+      bindingId?: number;
+      bindingKind?: FrontierDomBindingKind;
+      paths?: JsonPath[];
+      actionId?: string;
+      causeId?: string;
+      reads?: JsonPath[];
+      writes?: JsonPath[];
+      affected?: string[];
+      metadata?: Record<string, unknown>;
+    }
+  | {
       kind: 'binding-create';
       bindingId: number;
       bindingKind: FrontierDomBindingKind;
@@ -124,6 +139,7 @@ export type FrontierDomTraceEvent =
       bindingId: number;
       bindingKind: FrontierDomBindingKind;
       patchItems: number;
+      paths?: JsonPath[];
     }
   | {
       kind: 'dom-write';
@@ -145,6 +161,26 @@ export type FrontierDomTraceEvent =
       endIndex: number;
       totalItems: number;
       totalSize: number;
+    }
+  | {
+      kind: 'action-dispatch';
+      actionId: string;
+      causeId?: string;
+      manifestBindingId: string;
+      event: string;
+      input?: JsonValue;
+      reads?: JsonPath[];
+      writes?: JsonPath[];
+      affected?: string[];
+      metadata?: Record<string, unknown>;
+    }
+  | {
+      kind: 'hydration';
+      report: FrontierDomHydrationReport;
+      source?: {
+        expected?: FrontierDomManifestSource;
+        actual?: FrontierDomManifestSource;
+      };
     }
   | {
       kind: 'binding-dispose';
@@ -1257,6 +1293,11 @@ class DomApp implements FrontierDomApp {
       hydrateExisting: mountOptions.hydrateExisting,
       basisPolicy: 'ignore'
     });
+    recordRendererTrace(this.rendererValue, {
+      kind: 'hydration',
+      report,
+      source: report.source
+    });
     options.onHydrationReport?.(report);
     return this.rendererValue;
   }
@@ -1892,11 +1933,22 @@ class DomRenderer implements FrontierDomRenderer {
 
   commitPatch(patch: FrontierDomStatePatchInput, options?: FrontierDomStatePatchCommitOptions): JsonValue | undefined {
     if (!this.source.commitPatch) throw new TypeError('frontier-dom source does not support commitPatch');
+    this.trace({
+      kind: 'patch',
+      phase: 'commit',
+      patchItems: patch.length,
+      patch,
+      metadata: options
+    });
     return this.source.commitPatch(patch, options);
   }
 
   getTrace(): FrontierDomTraceEvent[] {
     return this.traceEvents.slice();
+  }
+
+  recordTrace(event: FrontierDomTraceEvent): void {
+    this.trace(event);
   }
 
   private addValueBinding(
@@ -1933,7 +1985,22 @@ class DomRenderer implements FrontierDomRenderer {
 
   private markDirty(record: BindingRecord, patch: Patch): void {
     if (!record.active || this.disposed) return;
-    this.trace({ kind: 'binding-dirty', bindingId: record.id, bindingKind: record.kind, patchItems: patch.length });
+    this.trace({
+      kind: 'patch',
+      phase: 'watch',
+      bindingId: record.id,
+      bindingKind: record.kind,
+      paths: record.paths,
+      patchItems: patch.length,
+      patch
+    });
+    this.trace({
+      kind: 'binding-dirty',
+      bindingId: record.id,
+      bindingKind: record.kind,
+      patchItems: patch.length,
+      paths: record.paths
+    });
     if (this.scheduler.sync) {
       record.apply(patch.length === 0 ? EMPTY_PATCH : patch);
       return;
@@ -2202,11 +2269,12 @@ function mountManifestBinding(
           (event, matched) => {
             const actionInput = readDomActionInput(renderer.source, binding, event, matched);
             const dispatchOptions = readDomActionDispatchOptions(binding, event, actionInput.reads);
+            traceDomActionDispatch(renderer, binding, event, actionInput.input, dispatchOptions);
             if (action) {
               action({
                 event,
                 renderer,
-                source: createDomActionSource(renderer.source, actionRegistry, binding, dispatchOptions),
+                source: createDomActionSource(renderer, actionRegistry, binding, dispatchOptions),
                 binding,
                 manifest,
                 input: actionInput.input,
@@ -2224,11 +2292,12 @@ function mountManifestBinding(
           (event) => {
             const actionInput = readDomActionInput(renderer.source, binding, event);
             const dispatchOptions = readDomActionDispatchOptions(binding, event, actionInput.reads);
+            traceDomActionDispatch(renderer, binding, event, actionInput.input, dispatchOptions);
             if (action) {
               action({
                 event,
                 renderer,
-                source: createDomActionSource(renderer.source, actionRegistry, binding, dispatchOptions),
+                source: createDomActionSource(renderer, actionRegistry, binding, dispatchOptions),
                 binding,
                 manifest,
                 input: actionInput.input,
@@ -2654,12 +2723,34 @@ function readDomActionDispatchOptions(
   };
 }
 
+function traceDomActionDispatch(
+  renderer: FrontierDomRenderer,
+  binding: FrontierDomEventManifestBinding,
+  event: Event,
+  input: JsonValue,
+  dispatchOptions: FrontierDomActionDispatchOptions
+): void {
+  recordRendererTrace(renderer, {
+    kind: 'action-dispatch',
+    actionId: binding.action,
+    causeId: dispatchOptions.causeId,
+    manifestBindingId: binding.id,
+    event: event.type,
+    input,
+    reads: normalizeWatchPathList(dispatchOptions.reads),
+    writes: normalizeWatchPathList(dispatchOptions.writes),
+    affected: dispatchOptions.affected?.slice(),
+    metadata: dispatchOptions.metadata
+  });
+}
+
 function createDomActionSource(
-  source: FrontierDomSource,
+  renderer: FrontierDomRenderer,
   actionRegistry: FrontierDomActionRegistryLike | undefined,
   binding: FrontierDomEventManifestBinding,
   dispatchOptions: FrontierDomActionDispatchOptions
 ): FrontierDomSource {
+  const source = renderer.source;
   if (!source.commitPatch) return source;
   return {
     get: () => source.get(),
@@ -2668,6 +2759,21 @@ function createDomActionSource(
     getHeads: source.getHeads ? () => source.getHeads?.() : undefined,
     getStateVector: source.getStateVector ? () => source.getStateVector?.() : undefined,
     commitPatch(patch, options) {
+      recordRendererTrace(renderer, {
+        kind: 'patch',
+        phase: 'commit',
+        patchItems: patch.length,
+        patch,
+        actionId: binding.action,
+        causeId: dispatchOptions.causeId,
+        reads: normalizeWatchPathList(dispatchOptions.reads),
+        writes: normalizeWatchPathList(dispatchOptions.writes),
+        affected: dispatchOptions.affected?.slice(),
+        metadata: {
+          ...(dispatchOptions.metadata ?? {}),
+          ...(options ?? {})
+        }
+      });
       if (actionRegistry?.commitPatch) {
         actionRegistry.commitPatch(patch, {
           ...dispatchOptions,
@@ -2685,6 +2791,17 @@ function createDomActionSource(
       });
     }
   };
+}
+
+function recordRendererTrace(renderer: FrontierDomRenderer, event: FrontierDomTraceEvent): void {
+  (renderer as FrontierDomRenderer & { recordTrace?: (event: FrontierDomTraceEvent) => void }).recordTrace?.(event);
+}
+
+function normalizeWatchPathList(paths: WatchPath[] | undefined): JsonPath[] | undefined {
+  if (!paths || paths.length === 0) return undefined;
+  const out = new Array<JsonPath>(paths.length);
+  for (let i = 0; i < paths.length; i++) out[i] = normalizePath(paths[i]);
+  return out;
 }
 
 function readDomActionInput(

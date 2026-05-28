@@ -479,9 +479,25 @@ renderer.formValue('/profile/name', input, { preserveSelection: true });
 Optional SSR/devtools helpers stay behind subpaths:
 
 ```ts
-import { createDomDevtoolsSink } from '@shapeshift-labs/frontier-dom/devtools';
+import { createDomDevtoolsInspector, installDomDevtoolsGlobal } from '@shapeshift-labs/frontier-dom/devtools';
 import { renderDomStateScript } from '@shapeshift-labs/frontier-dom/ssr';
+
+const inspector = createDomDevtoolsInspector({ actionRegistry });
+const renderer = createDomRenderer({ source, trace: inspector });
+
+inspector.attachRenderer(renderer);
+installDomDevtoolsGlobal('__FRONTIER_DOM__', inspector);
+
+const snapshot = inspector.snapshot({ includeStateSnapshot: false });
+snapshot.patchStream;
+snapshot.dirtyBindings;
+snapshot.domWrites;
+snapshot.virtualRanges;
+snapshot.actionProvenance;
+snapshot.hydration;
 ```
+
+The inspector is trace-sink based: the renderer emits patch notifications, dirty binding updates, DOM writes, virtual ranges, manifest action dispatches, and hydration reports only when `trace` is enabled. Passing a `frontier-mutation` action registry adds action history records to the same snapshot, so DOM events and non-DOM action dispatches can be inspected together.
 
 ## Browser Conformance
 
