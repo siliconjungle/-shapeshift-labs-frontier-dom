@@ -41,6 +41,11 @@
       "import": "./dist/compiler.js",
       "default": "./dist/compiler.js"
     },
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "import": "./dist/vite.js",
+      "default": "./dist/vite.js"
+    },
     "./logging": {
       "types": "./dist/logging.d.ts",
       "import": "./dist/logging.js",
@@ -104,6 +109,7 @@
   },
   "devDependencies": {
     "@shapeshift-labs/frontier-logging": "0.1.2",
+    "@types/node": "^22.10.0",
     "jsdom": "^22.1.0",
     "typescript": "^6.0.3"
   }

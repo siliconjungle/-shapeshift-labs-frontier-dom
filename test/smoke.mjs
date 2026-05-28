@@ -1,4 +1,7 @@
 import assert from 'node:assert';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { JSDOM } from 'jsdom';
 import { OP_ARRAY_OBJECT_FIELD_ASSIGN } from '@shapeshift-labs/frontier/constants';
 import { createStateEngine } from '@shapeshift-labs/frontier-state';
@@ -19,6 +22,7 @@ import { compileFrontierJsx } from '../dist/compiler.js';
 import { createDomDevtoolsSink, inspectDomRenderer } from '../dist/devtools.js';
 import { createRenderLogSink } from '../dist/logging.js';
 import { parseDomHydrationScript, renderDomHydrationScript, streamDomHydrationScript } from '../dist/ssr.js';
+import { compileFrontierDomBuildEntries, frontierDomVite, renderFrontierDomHydrationModule } from '../dist/vite.js';
 import {
   Fragment,
   createJsxManifest,
@@ -195,6 +199,7 @@ assert.strictEqual(effectCleanups, 4);
 runManifestHydrationSmoke();
 runJsxManifestSmoke();
 await runCompilerSmoke();
+await runVitePluginSmoke();
 await runAppApiSmoke();
 runVirtualDomSmoke();
 await runVirtualPrimitivesSmoke();
@@ -588,6 +593,95 @@ async function runCompilerSmoke() {
     diagnosticCompiled.diagnostics.map((diagnostic) => diagnostic.code).filter(Boolean).sort(),
     ['FRONTIER_JSX_RECURSIVE_COMPONENT', 'FRONTIER_JSX_SPREAD_ATTR', 'FRONTIER_JSX_UNKNOWN_COMPONENT']
   );
+}
+
+async function runVitePluginSmoke() {
+  const dir = await mkdtemp(join(tmpdir(), 'frontier-dom-vite-'));
+  try {
+    await writeFile(join(dir, 'App.tsx'), `
+      function Name({ id, path, children }) {
+        return <h1 frId={id}>{text(path, { frId: "name" })}{children}</h1>;
+      }
+      function App() {
+        return (
+          <main frId="app">
+            <Name id="heading" path="/user/name"><small>online</small></Name>
+            {each("/todos/*", { frId: "todos", as: "ul", keyBy: "id", template: "todo-row.v1" })}
+          </main>
+        );
+      }
+    `);
+    const options = {
+      rootDir: dir,
+      entries: {
+        app: {
+          input: 'App.tsx',
+          entry: 'App',
+          root: { selector: '#app' },
+          source: { kind: 'state', basis: 1 },
+          hydration: {
+            target: '#app',
+            sourceImport: './state.js',
+            sourceExport: 'source',
+            templatesImport: './templates.js',
+            templatesExport: 'templates'
+          }
+        }
+      }
+    };
+    const outputs = await compileFrontierDomBuildEntries(options);
+    assert.strictEqual(outputs.length, 1);
+    assert.strictEqual(outputs[0].diagnostics.length, 0);
+    assert.ok(outputs[0].compiled.html.includes('data-frontier-id="heading"'));
+    assert.ok(outputs[0].compiled.html.includes('<small>online</small>'));
+    assert.deepStrictEqual(outputs[0].result.manifest.bindings.map((binding) => binding.kind), ['text', 'each']);
+    assert.deepStrictEqual(outputs[0].artifacts.map((artifact) => artifact.fileName), [
+      'frontier-dom/app.html',
+      'frontier-dom/app.manifest.json',
+      'frontier-dom/app.hydration.js',
+      'frontier-dom/app.diagnostics.json'
+    ]);
+
+    const hydration = renderFrontierDomHydrationModule(outputs[0].compiled, options.entries.app.hydration);
+    assert.ok(hydration.includes("import { source as frontierSource } from \"./state.js\";"));
+    assert.ok(hydration.includes("import { templates as frontierTemplates } from \"./templates.js\";"));
+    assert.ok(hydration.includes('export function mountFrontierDom'));
+
+    const plugin = frontierDomVite(options);
+    const emitted = [];
+    const warnings = [];
+    const context = {
+      emitFile(file) {
+        emitted.push(file);
+        return 'asset-' + emitted.length;
+      },
+      warn(message) {
+        warnings.push(String(message));
+      },
+      error(message) {
+        throw new Error(String(message));
+      }
+    };
+    assert.deepStrictEqual(plugin.config().esbuild, {
+      jsx: 'automatic',
+      jsxImportSource: '@shapeshift-labs/frontier-dom'
+    });
+    await plugin.buildStart.call(context);
+    assert.strictEqual(warnings.length, 0);
+    assert.deepStrictEqual(emitted.map((file) => file.fileName), [
+      'frontier-dom/app.html',
+      'frontier-dom/app.manifest.json',
+      'frontier-dom/app.hydration.js',
+      'frontier-dom/app.diagnostics.json'
+    ]);
+    const resolved = plugin.resolveId('virtual:frontier-dom/app');
+    assert.strictEqual(resolved, '\0frontier-dom:app');
+    const loaded = await plugin.load.call(context, resolved);
+    assert.ok(loaded.includes('export const compiled'));
+    assert.ok(loaded.includes('mountFrontierDom'));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 async function runAppApiSmoke() {

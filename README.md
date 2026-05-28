@@ -308,6 +308,53 @@ compiled.manifest;
 
 The static compiler supports intrinsic tags, fragments, literal component props, simple `props.x` or destructured prop references, and component children slots. Dynamic spreads, runtime component references, and arbitrary userland expressions remain diagnostics rather than hidden runtime work.
 
+Vite builds can use the optional `./vite` subpath. The plugin configures automatic JSX for `.tsx`, compiles static entries, emits HTML, manifest JSON, hydration/import glue, and diagnostic JSON assets, and exposes the same compiled view through `virtual:frontier-dom/<entry>` modules:
+
+```ts
+import { frontierDomVite } from '@shapeshift-labs/frontier-dom/vite';
+
+export default {
+  plugins: [
+    frontierDomVite({
+      entries: {
+        app: {
+          input: 'src/App.tsx',
+          entry: 'App',
+          root: { selector: '#app' },
+          source: { kind: 'state' },
+          hydration: {
+            target: '#app',
+            sourceImport: './state.js',
+            sourceExport: 'source',
+            templatesImport: './templates.js',
+            templatesExport: 'templates'
+          }
+        }
+      }
+    })
+  ]
+};
+```
+
+The default build assets are:
+
+```txt
+frontier-dom/app.html
+frontier-dom/app.manifest.json
+frontier-dom/app.hydration.js
+frontier-dom/app.diagnostics.json
+```
+
+The emitted hydration module exports `html`, `manifest`, `compiled`, `createFrontierDomApp()`, and `mountFrontierDom()`:
+
+```ts
+import { mountFrontierDom } from 'virtual:frontier-dom/app';
+import { source } from './state.js';
+import { templates } from './templates.js';
+
+mountFrontierDom({ source, templates });
+```
+
 Render trace events can be sent to Frontier logging through `./logging`:
 
 ```ts

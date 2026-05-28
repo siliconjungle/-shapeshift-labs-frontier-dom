@@ -25,6 +25,7 @@ import { compileFrontierJsx, type FrontierJsxCompileResult } from '../dist/compi
 import { createDomDevtoolsSink, inspectDomRenderer } from '../dist/devtools.js';
 import { createRenderLogSink } from '../dist/logging.js';
 import { createHydrationBasisEnvelope, renderDomStateScript, streamDomHydrationScript } from '../dist/ssr.js';
+import { frontierDomVite, renderFrontierDomHydrationModule, type FrontierDomBuildOptions } from '../dist/vite.js';
 import { createJsxManifest, each, fixedLayout as jsxFixedLayout, jsx, text, virtualEach, when } from '../dist/jsx-runtime.js';
 import type { FrontierLogger } from '@shapeshift-labs/frontier-logging';
 import {
@@ -248,6 +249,22 @@ const appRenderer = app.mount(jsx('section', {
   ]
 }));
 const appSnapshot = app.serialize();
+const appBuildEntry = {
+  input: 'src/App.tsx',
+  entry: 'App',
+  hydration: {
+    target: '#app',
+    sourceImport: './state',
+    sourceExport: 'source',
+    templatesImport: './templates',
+    templatesExport: 'templates'
+  }
+};
+const buildOptions: FrontierDomBuildOptions = {
+  entries: { app: appBuildEntry }
+};
+const vitePlugin = frontierDomVite(buildOptions);
+const hydrationCode: string = renderFrontierDomHydrationModule({ html: '<main></main>', manifest: manifest }, appBuildEntry.hydration);
 
 const range = virtualize({
   items: (initial as { todos: JsonValue }).todos,
@@ -326,6 +343,8 @@ void jsxManifest;
 void compiled;
 void appRenderer;
 void appSnapshot;
+void vitePlugin;
+void hydrationCode;
 void patchBinding;
 void scheduledRenderer;
 void scheduledPatchRenderer;
