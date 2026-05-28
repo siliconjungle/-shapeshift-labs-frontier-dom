@@ -423,6 +423,7 @@ export interface FrontierDomEventManifestBinding extends FrontierDomManifestBase
   event: string;
   action: string;
   delegate?: string;
+  payload?: Record<string, WatchPath>;
   options?: FrontierDomSerializableEventOptions;
 }
 
@@ -506,6 +507,8 @@ export type FrontierDomActionHandler<TEvent extends Event = Event> = (context: {
   source: FrontierDomSource;
   binding: FrontierDomEventManifestBinding;
   manifest: FrontierDomRenderManifestV1;
+  input: JsonValue;
+  dispatchOptions: FrontierDomActionDispatchOptions;
 }) => void;
 
 export interface FrontierDomActionDispatchOptions {
@@ -513,10 +516,13 @@ export interface FrontierDomActionDispatchOptions {
   actor?: string;
   metadata?: Record<string, JsonValue>;
   affected?: string[];
+  reads?: WatchPath[];
+  writes?: WatchPath[];
 }
 
 export interface FrontierDomActionRegistryLike {
   dispatch(actionId: string, input?: JsonValue, options?: FrontierDomActionDispatchOptions): unknown;
+  commitPatch?(patch: FrontierDomStatePatchInput, options?: FrontierDomActionDispatchOptions & { actionId?: string; commitOptions?: FrontierDomStatePatchCommitOptions }): unknown;
 }
 
 export interface FrontierDomManifestRegistry {
@@ -2194,12 +2200,20 @@ function mountManifestBinding(
           binding.event,
           binding.delegate,
           (event, matched) => {
-            if (action) action({ event, renderer, source: renderer.source, binding, manifest });
-            else actionRegistry?.dispatch(
-              binding.action,
-              readDomActionInput(event, matched),
-              readDomActionDispatchOptions(binding, event)
-            );
+            const actionInput = readDomActionInput(renderer.source, binding, event, matched);
+            const dispatchOptions = readDomActionDispatchOptions(binding, event, actionInput.reads);
+            if (action) {
+              action({
+                event,
+                renderer,
+                source: createDomActionSource(renderer.source, actionRegistry, binding, dispatchOptions),
+                binding,
+                manifest,
+                input: actionInput.input,
+                dispatchOptions
+              });
+            }
+            else actionRegistry?.dispatch(binding.action, actionInput.input, dispatchOptions);
           },
           toEventOptions(binding.options)
         );
@@ -2208,12 +2222,20 @@ function mountManifestBinding(
           resolveNodeTarget(root, binding.target, targetCache),
           binding.event,
           (event) => {
-            if (action) action({ event, renderer, source: renderer.source, binding, manifest });
-            else actionRegistry?.dispatch(
-              binding.action,
-              readDomActionInput(event),
-              readDomActionDispatchOptions(binding, event)
-            );
+            const actionInput = readDomActionInput(renderer.source, binding, event);
+            const dispatchOptions = readDomActionDispatchOptions(binding, event, actionInput.reads);
+            if (action) {
+              action({
+                event,
+                renderer,
+                source: createDomActionSource(renderer.source, actionRegistry, binding, dispatchOptions),
+                binding,
+                manifest,
+                input: actionInput.input,
+                dispatchOptions
+              });
+            }
+            else actionRegistry?.dispatch(binding.action, actionInput.input, dispatchOptions);
           },
           toEventOptions(binding.options)
         );
@@ -2616,43 +2638,116 @@ function toEventOptions(options: FrontierDomSerializableEventOptions | undefined
 
 function readDomActionDispatchOptions(
   binding: FrontierDomEventManifestBinding,
-  event: Event
+  event: Event,
+  reads: WatchPath[] = []
 ): FrontierDomActionDispatchOptions {
   return {
     causeId: 'frontier-dom:' + binding.id + ':' + event.type,
     metadata: {
       bindingId: binding.id,
       action: binding.action,
-      event: event.type
+      event: event.type,
+      payloadReads: reads.map((path) => normalizePath(path))
+    },
+    affected: ['dom.binding:' + binding.id],
+    reads
+  };
+}
+
+function createDomActionSource(
+  source: FrontierDomSource,
+  actionRegistry: FrontierDomActionRegistryLike | undefined,
+  binding: FrontierDomEventManifestBinding,
+  dispatchOptions: FrontierDomActionDispatchOptions
+): FrontierDomSource {
+  if (!source.commitPatch) return source;
+  return {
+    get: () => source.get(),
+    watch: (options, callback) => source.watch(options, callback),
+    getBasis: source.getBasis ? () => source.getBasis?.() : undefined,
+    getHeads: source.getHeads ? () => source.getHeads?.() : undefined,
+    getStateVector: source.getStateVector ? () => source.getStateVector?.() : undefined,
+    commitPatch(patch, options) {
+      if (actionRegistry?.commitPatch) {
+        actionRegistry.commitPatch(patch, {
+          ...dispatchOptions,
+          actionId: binding.action,
+          commitOptions: options
+        });
+        return source.get();
+      }
+      return source.commitPatch?.(patch, {
+        origin: binding.action,
+        causeId: dispatchOptions.causeId,
+        actor: dispatchOptions.actor,
+        metadata: dispatchOptions.metadata,
+        ...(options ?? {})
+      });
     }
   };
 }
 
-function readDomActionInput(event: Event, matched?: Element): JsonValue {
+function readDomActionInput(
+  source: FrontierDomSource,
+  binding: FrontierDomEventManifestBinding,
+  event: Event,
+  matched?: Element
+): { input: JsonValue; reads: WatchPath[] } {
   const target = matched ?? (isElementLike(event.target) ? event.target : undefined);
   const input: Record<string, JsonValue> = { event: event.type };
-  if (!target) return input;
-  const payload = target.getAttribute('data-frontier-action-payload') ?? target.getAttribute('data-action-payload');
-  if (payload) {
-    try {
-      input.payload = JSON.parse(payload) as JsonValue;
-    } catch {
-      input.payload = payload;
+  const reads: WatchPath[] = [];
+  if (target) {
+    const payload = target.getAttribute('data-frontier-action-payload') ?? target.getAttribute('data-action-payload');
+    if (payload) {
+      try {
+        input.payload = JSON.parse(payload) as JsonValue;
+      } catch {
+        input.payload = payload;
+      }
     }
+    const id = target.getAttribute('id');
+    if (id) input.id = id;
+    const name = target.getAttribute('name');
+    if (name) input.name = name;
+    const action = target.getAttribute('data-action');
+    if (action) input.action = action;
+    const dataset = readElementDataset(target);
+    if (Object.keys(dataset).length !== 0) input.dataset = dataset;
+    const value = readJsonDomProperty(target, 'value');
+    if (value !== undefined) input.value = value;
+    const checked = readJsonDomProperty(target, 'checked');
+    if (checked !== undefined) input.checked = checked;
   }
-  const id = target.getAttribute('id');
-  if (id) input.id = id;
-  const name = target.getAttribute('name');
-  if (name) input.name = name;
-  const action = target.getAttribute('data-action');
-  if (action) input.action = action;
-  const dataset = readElementDataset(target);
-  if (Object.keys(dataset).length !== 0) input.dataset = dataset;
-  const value = readJsonDomProperty(target, 'value');
-  if (value !== undefined) input.value = value;
-  const checked = readJsonDomProperty(target, 'checked');
-  if (checked !== undefined) input.checked = checked;
-  return input;
+  const payload = readDomActionPayload(source, binding.payload);
+  if (payload) {
+    reads.push(...payload.reads);
+    const nestedPayload = input.payload && typeof input.payload === 'object' && !Array.isArray(input.payload)
+      ? { ...(input.payload as Record<string, JsonValue>) }
+      : {};
+    for (const key of Object.keys(payload.values)) {
+      input[key] = payload.values[key];
+      nestedPayload[key] = payload.values[key];
+    }
+    input.payload = nestedPayload;
+  }
+  return { input, reads };
+}
+
+function readDomActionPayload(
+  source: FrontierDomSource,
+  payload: Record<string, WatchPath> | undefined
+): { values: Record<string, JsonValue>; reads: WatchPath[] } | null {
+  if (!payload) return null;
+  const values: Record<string, JsonValue> = {};
+  const reads: WatchPath[] = [];
+  const state = source.get();
+  for (const key of Object.keys(payload)) {
+    const path = payload[key];
+    reads[reads.length] = path;
+    const value = readPath(state, normalizePath(path));
+    if (value !== undefined) values[key] = value;
+  }
+  return { values, reads };
 }
 
 function readElementDataset(element: Element): JsonValue {

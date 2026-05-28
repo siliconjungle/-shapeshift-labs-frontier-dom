@@ -62,6 +62,9 @@ interface FrontierAttributeState {
   classMap?: Record<string, WatchPath>;
   styleMap?: Record<string, WatchPath>;
   on?: Record<string, string>;
+  action?: string;
+  actionEvent?: string;
+  actionPayload?: Record<string, WatchPath>;
   form?: Partial<FrontierDomFormManifestBinding> & { path?: WatchPath };
   when?: Partial<FrontierDomWhenManifestBinding> & { path?: WatchPath; template?: string };
   each?: Partial<FrontierDomEachManifestBinding> & { path?: WatchPath; template?: string };
@@ -475,6 +478,12 @@ class FrontierJsxCompiler {
       case '$on':
         attributes.on = this.readStringMap(value, attribute, '$on');
         return;
+      case '$action':
+        this.readActionAttribute(value, attributes, attribute);
+        return;
+      case '$payload':
+        attributes.actionPayload = this.readWatchPathMap(value, attribute, '$payload');
+        return;
       case '$form':
         attributes.form = value && typeof value === 'object' ? value as FrontierAttributeState['form'] : undefined;
         if (!attributes.form) this.report('error', '$form requires a static options object', attribute, 'FRONTIER_JSX_FORM_ATTR');
@@ -595,6 +604,29 @@ class FrontierJsxCompiler {
     return map;
   }
 
+  private readActionAttribute(value: unknown, attributes: FrontierAttributeState, node: TsNode): void {
+    if (typeof value === 'string') {
+      attributes.action = value;
+      return;
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      this.report('error', '$action requires a static action string or options object', node, 'FRONTIER_JSX_ACTION_ATTR');
+      return;
+    }
+    const spec = value as Record<string, unknown>;
+    const action = typeof spec.action === 'string'
+      ? spec.action
+      : typeof spec.id === 'string'
+        ? spec.id
+        : undefined;
+    if (!action) {
+      this.report('error', '$action.action must be a static action name', node, 'FRONTIER_JSX_ACTION_NAME');
+      return;
+    }
+    attributes.action = action;
+    if (typeof spec.event === 'string') attributes.actionEvent = spec.event;
+  }
+
   private addBindings(anchor: string, attributes: FrontierAttributeState, node: TsNode): void {
     const target = { anchor };
     if (attributes.text !== undefined) {
@@ -620,6 +652,18 @@ class FrontierJsxCompiler {
         };
         this.bindings[this.bindings.length] = binding;
       }
+    }
+    if (attributes.action) {
+      const event = attributes.actionEvent ?? 'click';
+      const binding: FrontierDomEventManifestBinding = {
+        id: 'b:' + anchor + ':action:' + event,
+        kind: 'event',
+        target,
+        event,
+        action: attributes.action,
+        payload: attributes.actionPayload
+      };
+      this.bindings[this.bindings.length] = binding;
     }
     if (attributes.form) {
       const binding = this.createFormBinding(anchor, attributes.form, node);
@@ -775,6 +819,7 @@ class FrontierJsxCompiler {
       attributes.classMap !== undefined ||
       attributes.styleMap !== undefined ||
       attributes.on !== undefined ||
+      attributes.action !== undefined ||
       attributes.form !== undefined ||
       attributes.when !== undefined ||
       attributes.each !== undefined ||

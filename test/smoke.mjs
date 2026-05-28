@@ -469,6 +469,7 @@ function runJsxManifestSmoke() {
         children: [
           jsx('span', { frId: 'label', $text: '/user/name' }),
           jsx('button', { frId: 'save-action', $on: { click: 'save.user' } }),
+          jsx('button', { frId: 'toggle-action', $action: 'todo.toggle', $payload: { id: '/todos/0/id' } }),
           jsx('ul', {
             frId: 'todo-list',
             $each: {
@@ -510,8 +511,11 @@ function runJsxManifestSmoke() {
       })
     );
     const manifest = createJsxManifest(root, { root: { anchor: 'panel' }, source: { kind: 'state' } });
-    assert.deepStrictEqual(manifest.bindings.map((binding) => binding.kind), ['text', 'event', 'each', 'text', 'when', 'virtualEach', 'text', 'attr']);
-    const jsxState = createStateEngine({ user: { name: 'JSX' }, feature: { visible: true }, radius: 4, todos: [{ id: 'x', text: 'Row X' }] }, { diff: { arrayKey: 'id' } });
+    assert.deepStrictEqual(manifest.bindings.map((binding) => binding.kind), ['text', 'event', 'event', 'each', 'text', 'when', 'virtualEach', 'text', 'attr']);
+    assert.deepStrictEqual(manifest.bindings.find((binding) => binding.id === 'b:toggle-action:action:click').payload, { id: '/todos/0/id' });
+    const jsxState = createStateEngine({ user: { name: 'JSX' }, feature: { visible: true }, radius: 4, todos: [{ id: 'x', text: 'Row X', done: false }] }, { diff: { arrayKey: 'id' } });
+    const actionCalls = [];
+    const actionCommits = [];
     const renderer = createDomRendererFromManifest({
       source: fromStateEngine(jsxState),
       target: root,
@@ -541,6 +545,24 @@ function runJsxManifestSmoke() {
       },
       actions: {
         'save.user': ({ source }) => source.commitPatch?.([[0, ['user', 'name'], 'Saved JSX']])
+      },
+      actionRegistry: {
+        commitPatch(patch, options) {
+          actionCommits.push({ patch, options });
+          return jsxState.commitPatch(patch, options.commitOptions);
+        },
+        dispatch(actionId, input, options) {
+          actionCalls.push({ actionId, input, options });
+          assert.strictEqual(actionId, 'todo.toggle');
+          assert.strictEqual(input.id, 'x');
+          assert.deepStrictEqual(input.payload, { id: 'x' });
+          assert.deepStrictEqual(options.reads, ['/todos/0/id']);
+          assert.ok(options.affected.includes('dom.binding:b:toggle-action:action:click'));
+          jsxState.commitPatch([[0, ['todos', 0, 'done'], true]], {
+            origin: actionId,
+            causeId: options.causeId
+          });
+        }
       }
     });
     assert.strictEqual(root.querySelector('[data-frontier-id="label"]').textContent, 'JSX');
@@ -557,6 +579,13 @@ function runJsxManifestSmoke() {
     root.querySelector('[data-frontier-id="save-action"]').dispatchEvent(new dom.window.Event('click'));
     renderer.flush();
     assert.strictEqual(root.querySelector('[data-frontier-id="label"]').textContent, 'Saved JSX');
+    assert.strictEqual(actionCommits[0].options.actionId, 'save.user');
+    assert.strictEqual(actionCommits[0].options.causeId, 'frontier-dom:b:save-action:event:click:click');
+    assert.ok(actionCommits[0].options.affected.includes('dom.binding:b:save-action:event:click'));
+    root.querySelector('[data-frontier-id="toggle-action"]').dispatchEvent(new dom.window.Event('click'));
+    renderer.flush();
+    assert.strictEqual(actionCalls.length, 1);
+    assert.strictEqual(jsxState.get().todos[0].done, true);
     renderer.dispose();
   } finally {
     if (previousDocument === undefined) delete globalThis.document;
@@ -593,6 +622,7 @@ async function runCompilerSmoke() {
       <main frId="panel">
         <span frId="name" $text="/user/name" />
         <button frId="save" $on={{ click: "save.user" }} />
+        <button frId="toggle" $action="todo.toggle" $payload={{ id: "/todos/0/id" }} />
         <input frId="name-input" $form={{ path: "/user/name", prop: "value" }} />
         <ul frId="todos" $each={{ path: "/todos/*", fields: ["text"], keyBy: "id", template: "todo-row.v1" }} />
         {text("/user/name", { frId: "helper-name" })}
@@ -618,9 +648,10 @@ async function runCompilerSmoke() {
   assert.ok(compiled.html.includes('data-frontier-id="virtual-todos"'));
   assert.deepStrictEqual(
     compiled.manifest.bindings.map((binding) => binding.kind),
-    ['text', 'event', 'form', 'each', 'text', 'when', 'virtualEach']
+    ['text', 'event', 'event', 'form', 'each', 'text', 'when', 'virtualEach']
   );
   assert.strictEqual(compiled.manifest.source.basis, 1);
+  assert.deepStrictEqual(compiled.manifest.bindings.find((binding) => binding.id === 'b:toggle:action:click').payload, { id: '/todos/0/id' });
   assert.strictEqual(compiled.manifest.bindings.at(-1).layout.kind, 'text');
 
   const appCompiled = await compileFrontierJsx(`

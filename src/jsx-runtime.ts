@@ -1,5 +1,6 @@
 import type {
   FrontierDomEachManifestBinding,
+  FrontierDomEventManifestBinding,
   FrontierDomFormManifestBinding,
   FrontierDomManifestBinding,
   FrontierDomManifestSource,
@@ -90,6 +91,8 @@ export type FrontierJsxProps = Record<string, unknown> & {
   $class?: Record<string, WatchPath>;
   $style?: Record<string, WatchPath>;
   $on?: Record<string, string>;
+  $action?: string | { action?: string; id?: string; event?: string; options?: FrontierDomEventManifestBinding['options'] };
+  $payload?: Record<string, WatchPath>;
   $form?: Omit<FrontierDomFormManifestBinding, 'id' | 'kind' | 'target'>;
   $when?: Omit<FrontierDomWhenManifestBinding, 'id' | 'kind' | 'target'>;
   $each?: Omit<FrontierDomEachManifestBinding, 'id' | 'kind' | 'container'>;
@@ -262,6 +265,19 @@ export function createJsxManifest(root: ParentNode, options: FrontierJsxManifest
         };
       }
     }
+    const action = element.getAttribute('data-frontier-action');
+    if (action !== null) {
+      const event = element.getAttribute('data-frontier-action-event') ?? 'click';
+      const payload = parseFrontierPayloadPaths(element.getAttribute('data-frontier-action-payload-paths'));
+      bindings[bindings.length] = {
+        id: 'b:' + anchor + ':action:' + event,
+        kind: 'event',
+        target,
+        event,
+        action,
+        payload
+      };
+    }
     const each = element.getAttribute('data-frontier-each');
     if (each !== null) {
       const spec = JSON.parse(each) as Omit<FrontierDomEachManifestBinding, 'id' | 'kind' | 'container'>;
@@ -362,6 +378,14 @@ function applyProps(node: Node, props: FrontierJsxProps): void {
       writeFrontierMapProps(node, key, value);
       continue;
     }
+    if (key === '$action') {
+      writeFrontierActionProps(node, value);
+      continue;
+    }
+    if (key === '$payload') {
+      node.setAttribute('data-frontier-action-payload-paths', JSON.stringify(value));
+      continue;
+    }
     if (key === '$each') {
       node.setAttribute('data-frontier-each', JSON.stringify(value));
       continue;
@@ -411,6 +435,30 @@ function writeFrontierMapProps(element: Element, key: string, value: unknown): v
     const path = (value as Record<string, unknown>)[name];
     if (path !== undefined && path !== null) element.setAttribute(prefix + name, String(path));
   }
+}
+
+function writeFrontierActionProps(element: Element, value: unknown): void {
+  if (typeof value === 'string') {
+    element.setAttribute('data-frontier-action', value);
+    return;
+  }
+  if (value === null || typeof value !== 'object') return;
+  const spec = value as { action?: unknown; id?: unknown; event?: unknown };
+  const action = typeof spec.action === 'string' ? spec.action : typeof spec.id === 'string' ? spec.id : undefined;
+  if (action) element.setAttribute('data-frontier-action', action);
+  if (typeof spec.event === 'string') element.setAttribute('data-frontier-action-event', spec.event);
+}
+
+function parseFrontierPayloadPaths(value: string | null): Record<string, WatchPath> | undefined {
+  if (value === null) return undefined;
+  const parsed = JSON.parse(value) as Record<string, unknown>;
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  const out: Record<string, WatchPath> = {};
+  for (const key of Object.keys(parsed)) {
+    const path = parsed[key];
+    if (typeof path === 'string' || Array.isArray(path)) out[key] = path as WatchPath;
+  }
+  return Object.keys(out).length === 0 ? undefined : out;
 }
 
 function appendChildren(parent: Node, children: unknown): void {

@@ -68,7 +68,7 @@ Package source repositories:
 ## Install
 
 ```sh
-npm install @shapeshift-labs/frontier-dom @shapeshift-labs/frontier-state
+npm install @shapeshift-labs/frontier-dom @shapeshift-labs/frontier-state @shapeshift-labs/frontier-mutation
 ```
 
 ## Current Surface
@@ -86,11 +86,15 @@ The main product-facing API is JSX-first:
 
 ```tsx
 import { createApp, fromStateEngine } from '@shapeshift-labs/frontier-dom';
+import { createActionRegistry } from '@shapeshift-labs/frontier-mutation';
 import { each, fixedLayout, text, virtualEach, when } from '@shapeshift-labs/frontier-dom/jsx-runtime';
+
+const actions = createActionRegistry({ state: fromStateEngine(state), actor: 'local-user' });
 
 const app = createApp({
   source: fromStateEngine(state),
   target: '#app',
+  actionRegistry: actions,
   templates: {
     'todo-row.v1': {
       create(todo) {
@@ -111,6 +115,7 @@ const app = createApp({
 app.mount(
   <main frId="app">
     {text('/user/name', { frId: 'user-name' })}
+    <button frId="toggle-first" $action="todo.toggle" $payload={{ id: '/todos/0/id' }} />
     {when('/session/userId', {
       frId: 'session-slot',
       template: 'signed-in.v1',
@@ -258,7 +263,7 @@ hydrateDomRenderer({
 });
 ```
 
-`actionRegistry` is structural, so it can be a `@shapeshift-labs/frontier-mutation` action registry or an app-owned adapter with the same `dispatch(actionId, input, options)` method. Manifest events use local `actions` first, then fall back to the registry:
+`actionRegistry` is structural, so it can be a `@shapeshift-labs/frontier-mutation` action registry or an app-owned adapter with the same `dispatch(actionId, input, options)` method. JSX `$action` compiles to a manifest event binding, and `$payload` reads state paths into the dispatched input while recording those paths as provenance reads. Manifest events use local `actions` first, then fall back to the registry; local action handlers that call `source.commitPatch()` are bridged through `actionRegistry.commitPatch()` when present so the patch keeps the same cause/action metadata.
 
 ```ts
 import { createActionRegistry } from '@shapeshift-labs/frontier-mutation';
@@ -267,13 +272,19 @@ const actions = createActionRegistry({ state: fromStateEngine(state), actor: 'lo
 
 actions.register({
   id: 'todo.toggle',
+  input: (value) => ({ valid: value && typeof value.id === 'string' }),
   reads: ['/todos/*/done'],
   writes: ['/todos/*/done'],
+  affects: ['view:openTodos'],
   run(ctx, input) {
-    const todo = ctx.query('/todos/*', { id: input.payload.id });
+    const todo = ctx.query('/todos/*', { id: input.id });
     if (todo) ctx.commit([[0, ['todos', todo.index, 'done'], !todo.value.done]]);
   }
 });
+
+// The resulting record includes actionId, causeId, payload reads,
+// patch writes, and affected DOM/view nodes.
+actions.history().at(-1);
 ```
 
 The same patch graph can drive non-DOM hosts through `./core`:

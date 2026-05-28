@@ -135,7 +135,7 @@ const manifest: FrontierDomRenderManifestV1 = {
   version: 1,
   bindings: [
     { id: 'b:user', kind: 'text', path: '/user/name', target: { selector: '[data-user]' } },
-    { id: 'a:save', kind: 'event', event: 'click', action: 'save', target: { selector: 'button' } },
+    { id: 'a:save', kind: 'event', event: 'click', action: 'save', target: { selector: 'button' }, payload: { id: '/todos/0/id' } },
     {
       id: 'b:when',
       kind: 'when',
@@ -196,17 +196,31 @@ const manifestRenderer = createDomRendererFromManifest({
     }
   },
   actions: {
-    save({ source }) {
+    save({ source, input, dispatchOptions }) {
       source.commitPatch?.([[0, ['user', 'name'], 'Saved']]);
+      const payload: JsonValue = input;
+      const cause: string | undefined = dispatchOptions.causeId;
+      void payload;
+      void cause;
     }
   },
   actionRegistry: {
+    commitPatch(patch, options) {
+      const actionId: string | undefined = options?.actionId;
+      const reads = options?.reads;
+      void actionId;
+      void reads;
+      return (state as { commitPatch(patch: Patch, options?: unknown): unknown }).commitPatch(patch, options?.commitOptions);
+    },
     dispatch(actionId, input, options) {
       const id: string = actionId;
       const payload: JsonValue | undefined = input;
       void id;
       void payload;
       void options?.causeId;
+      void options?.reads?.[0];
+      void options?.writes?.[0];
+      void options?.affected?.[0];
     }
   }
 });
@@ -218,6 +232,7 @@ const jsxNode = jsx('span', { frId: 'typed', $text: '/user/name' });
 target.appendChild(jsxNode);
 target.appendChild(jsx('div', {
   children: [
+    jsx('button', { frId: 'typed-action', $action: 'todo.toggle', $payload: { id: '/todos/0/id' } }),
     text('/user/name', { frId: 'name-from-helper' }),
     each('/todos/*', {
       frId: 'todos-from-helper',

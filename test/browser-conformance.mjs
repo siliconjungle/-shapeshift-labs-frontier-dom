@@ -215,6 +215,7 @@ try {
   await runCase('fragments', testFragments);
   await runCase('svg mathml', testSvgMathml);
   await runCase('delegated events', testDelegatedEvents);
+  await runCase('jsx action payload provenance', testJsxActionPayloadProvenance);
   await runCase('forms selection ime', testFormsSelectionIme);
   await runCase('focus preservation', testFocusPreservation);
   await runCase('hydration reconciliation', testHydrationReconciliation);
@@ -391,6 +392,39 @@ function testDelegatedEvents() {
   renderer.flush();
   assert.strictEqual(calls, 1);
   assert.strictEqual(state.get().toggled, true);
+  renderer.dispose();
+}
+
+function testJsxActionPayloadProvenance() {
+  const root = resetRoot('<main></main>');
+  const state = createStateEngine({ todos: [{ id: 'a', done: false }] }, { diff: { arrayKey: 'id' } });
+  root.querySelector('main').appendChild(jsx('button', {
+    frId: 'toggle',
+    $action: 'todo.toggle',
+    $payload: { id: '/todos/0/id' }
+  }));
+  const manifest = createJsxManifest(root);
+  const calls = [];
+  const renderer = createDomRendererFromManifest({
+    source: fromStateEngine(state),
+    target: root,
+    manifest,
+    actionRegistry: {
+      dispatch(actionId, input, options) {
+        calls.push({ actionId, input, options });
+        assert.strictEqual(actionId, 'todo.toggle');
+        assert.strictEqual(input.id, 'a');
+        assert.deepStrictEqual(input.payload, { id: 'a' });
+        assert.deepStrictEqual(options.reads, ['/todos/0/id']);
+        assert(options.affected.includes('dom.binding:b:toggle:action:click'), 'action should affect the DOM binding');
+        state.commitPatch([[0, ['todos', 0, 'done'], true]]);
+      }
+    }
+  });
+  root.querySelector('[data-frontier-id="toggle"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  renderer.flush();
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(state.get().todos[0].done, true);
   renderer.dispose();
 }
 

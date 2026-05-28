@@ -99,6 +99,7 @@ export interface FrontierDomEventManifestBinding extends FrontierDomManifestBase
   event: string;
   action: string;
   delegate?: string;
+  payload?: Record<string, WatchPath>;
   options?: FrontierDomSerializableEventOptions;
 }
 
