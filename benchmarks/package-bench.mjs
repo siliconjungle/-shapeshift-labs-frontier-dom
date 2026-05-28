@@ -493,22 +493,22 @@ function createBenchTemplates(document) {
 
 function createCompiledBenchSource() {
   return `
-    function Title() {
-      return <h1 frId="title" $text="/title" />;
+    function Title({ id, path, children }) {
+      return <header frId="header"><h1 frId={id} $text={path} />{children}</header>;
     }
-    function Rows() {
+    function Rows(props) {
       return (
         <ul
-          frId="rows"
-          $each={{ path: "/rows/*", fields: ["text", "done"], keyBy: "id", template: "row" }}
+          frId={props.id}
+          $each={{ path: props.path, fields: ["text", "done"], keyBy: "id", template: props.template }}
         />
       );
     }
     function App() {
       return (
         <main frId="app-view">
-          <Title />
-          <Rows />
+          <Title id="title" path="/title"><p data-static-title="true">static</p></Title>
+          <Rows id="rows" path="/rows/*" template="row" />
           {virtualEach("/rows/*", {
             frId: "virtual-rows",
             keyBy: "id",

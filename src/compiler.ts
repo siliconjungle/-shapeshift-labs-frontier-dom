@@ -76,7 +76,23 @@ interface FrontierComponentDefinition {
   name: string;
   node: TsJsxRoot;
   declaration: TsNode;
+  parameter?: tsType.ParameterDeclaration;
 }
+
+interface FrontierFoundComponent {
+  node: TsJsxRoot;
+  parameter?: tsType.ParameterDeclaration;
+}
+
+interface FrontierComponentScope {
+  props: Record<string, unknown>;
+  locals: Record<string, unknown>;
+  children?: tsType.NodeArray<tsType.JsxChild>;
+  childScopes: FrontierComponentScope[];
+  childrenHtml?: string;
+}
+
+const CHILDREN_SLOT = Symbol.for('frontier.dom.jsx.children');
 
 export async function compileFrontierJsx(
   sourceText: string,
@@ -105,6 +121,7 @@ class FrontierJsxCompiler {
   private diagnostics: FrontierJsxCompileDiagnostic[] = [];
   private components = new Map<string, FrontierComponentDefinition>();
   private componentStack: string[] = [];
+  private componentScopes: FrontierComponentScope[] = [];
   private nextAutoId = 1;
 
   constructor(
@@ -140,14 +157,24 @@ class FrontierJsxCompiler {
     for (const statement of this.sourceFile.statements) {
       if (this.ts.isFunctionDeclaration(statement) && statement.name && isComponentName(statement.name.text)) {
         const node = statement.body ? this.findReturnJsx(statement.body) : null;
-        if (node) this.components.set(statement.name.text, { name: statement.name.text, node, declaration: statement });
+        if (node) this.components.set(statement.name.text, {
+          name: statement.name.text,
+          node,
+          declaration: statement,
+          parameter: statement.parameters[0]
+        });
         continue;
       }
       if (!this.ts.isVariableStatement(statement)) continue;
       for (const declaration of statement.declarationList.declarations) {
         if (!this.ts.isIdentifier(declaration.name) || !isComponentName(declaration.name.text)) continue;
-        const node = this.findInitializerComponentJsx(declaration.initializer);
-        if (node) this.components.set(declaration.name.text, { name: declaration.name.text, node, declaration });
+        const component = this.findInitializerComponentJsx(declaration.initializer);
+        if (component) this.components.set(declaration.name.text, {
+          name: declaration.name.text,
+          node: component.node,
+          declaration,
+          parameter: component.parameter
+        });
       }
     }
   }
@@ -218,14 +245,17 @@ class FrontierJsxCompiler {
     return null;
   }
 
-  private findInitializerComponentJsx(initializer: TsExpression | undefined): TsJsxRoot | null {
+  private findInitializerComponentJsx(initializer: TsExpression | undefined): FrontierFoundComponent | null {
     if (!initializer) return null;
     if (this.ts.isArrowFunction(initializer)) {
-      if (this.ts.isBlock(initializer.body)) return this.findReturnJsx(initializer.body);
-      return this.tryReadJsxFromExpression(initializer.body as TsExpression);
+      const node = this.ts.isBlock(initializer.body)
+        ? this.findReturnJsx(initializer.body)
+        : this.tryReadJsxFromExpression(initializer.body as TsExpression);
+      return node ? { node, parameter: initializer.parameters[0] } : null;
     }
     if (this.ts.isFunctionExpression(initializer)) {
-      return initializer.body ? this.findReturnJsx(initializer.body) : null;
+      const node = initializer.body ? this.findReturnJsx(initializer.body) : null;
+      return node ? { node, parameter: initializer.parameters[0] } : null;
     }
     return null;
   }
@@ -290,16 +320,12 @@ class FrontierJsxCompiler {
       this.report('error', 'Recursive JSX component cannot be statically compiled: ' + name, node, 'FRONTIER_JSX_RECURSIVE_COMPONENT');
       return { html: '', hasFrontierBindings: false };
     }
-    if (attributes.length !== 0 || (children && children.length !== 0)) {
-      this.report(
-        'warning',
-        'Static Frontier JSX component compilation currently ignores component props and children: ' + name,
-        node,
-        'FRONTIER_JSX_COMPONENT_PROPS'
-      );
-    }
+    const props = this.readComponentProps(attributes);
+    const scope = this.createComponentScope(component, props, children, node);
     this.componentStack[this.componentStack.length] = name;
+    this.componentScopes[this.componentScopes.length] = scope;
     const html = this.compileNode(component.node);
+    this.componentScopes.pop();
     this.componentStack.pop();
     return { html, hasFrontierBindings: true };
   }
@@ -327,6 +353,8 @@ class FrontierJsxCompiler {
 
   private compileExpressionChild(expression: TsExpression | undefined): string {
     if (!expression) return '';
+    const childrenHtml = this.tryCompileChildrenExpression(expression);
+    if (childrenHtml !== null) return childrenHtml;
     const helper = this.tryCompileHelperExpression(expression);
     if (helper !== null) return helper;
     const value = this.evaluateStaticExpression(expression);
@@ -482,6 +510,61 @@ class FrontierJsxCompiler {
     if (this.ts.isStringLiteral(initializer)) return initializer.text;
     if (this.ts.isJsxExpression(initializer)) return initializer.expression ? this.evaluateStaticExpression(initializer.expression) : undefined;
     return undefined;
+  }
+
+  private readComponentProps(properties: tsType.NodeArray<tsType.JsxAttributeLike>): Record<string, unknown> {
+    const props: Record<string, unknown> = {};
+    for (const property of properties) {
+      if (this.ts.isJsxSpreadAttribute(property)) {
+        this.report('warning', 'JSX component spread props are not compiled into Frontier manifests', property, 'FRONTIER_JSX_COMPONENT_SPREAD');
+        continue;
+      }
+      const name = this.ts.isIdentifier(property.name) ? property.name.text : property.name.getText(this.sourceFile);
+      props[name] = this.readAttributeValue(property);
+    }
+    return props;
+  }
+
+  private createComponentScope(
+    component: FrontierComponentDefinition,
+    props: Record<string, unknown>,
+    children: tsType.NodeArray<tsType.JsxChild> | undefined,
+    node: TsNode
+  ): FrontierComponentScope {
+    const propsWithChildren: Record<string, unknown> = { ...props };
+    if (children && children.length !== 0) propsWithChildren.children = CHILDREN_SLOT;
+    const scope: FrontierComponentScope = {
+      props: propsWithChildren,
+      locals: Object.create(null) as Record<string, unknown>,
+      children,
+      childScopes: this.componentScopes.slice()
+    };
+    const parameter = component.parameter;
+    if (!parameter) return scope;
+    if (this.ts.isIdentifier(parameter.name)) {
+      scope.locals[parameter.name.text] = propsWithChildren;
+      return scope;
+    }
+    if (this.ts.isObjectBindingPattern(parameter.name)) {
+      for (const element of parameter.name.elements) {
+        if (!this.ts.isIdentifier(element.name)) {
+          this.report('warning', 'Only identifier component prop bindings are statically compiled: ' + component.name, node, 'FRONTIER_JSX_COMPONENT_BINDING');
+          continue;
+        }
+        const propName = this.bindingNameToString(element.propertyName) ?? element.name.text;
+        scope.locals[element.name.text] = Object.prototype.hasOwnProperty.call(propsWithChildren, propName)
+          ? propsWithChildren[propName]
+          : undefined;
+      }
+      return scope;
+    }
+    this.report('warning', 'Unsupported component parameter shape: ' + component.name, node, 'FRONTIER_JSX_COMPONENT_PARAMETER');
+    return scope;
+  }
+
+  private bindingNameToString(name: tsType.PropertyName | undefined): string | null {
+    if (!name) return null;
+    return this.propertyNameToString(name);
   }
 
   private readWatchPathMap(value: unknown, node: TsNode, name: string): Record<string, WatchPath> | undefined {
@@ -700,6 +783,27 @@ class FrontierJsxCompiler {
 
   private evaluateStaticExpression(expression: TsExpression | undefined): unknown {
     if (!expression) return undefined;
+    if (this.ts.isParenthesizedExpression(expression)) return this.evaluateStaticExpression(expression.expression);
+    if (this.ts.isIdentifier(expression)) {
+      const local = this.lookupLocal(expression.text);
+      if (local.found) return local.value;
+    }
+    if (this.ts.isPropertyAccessExpression(expression)) {
+      const target = this.evaluateStaticExpression(expression.expression as TsExpression);
+      if (target !== null && typeof target === 'object') return (target as Record<string, unknown>)[expression.name.text];
+      return undefined;
+    }
+    if (this.ts.isElementAccessExpression(expression)) {
+      const target = this.evaluateStaticExpression(expression.expression as TsExpression);
+      const key = this.evaluateStaticExpression(expression.argumentExpression as TsExpression);
+      if ((typeof key === 'string' || typeof key === 'number') && target !== null && typeof target === 'object') {
+        return (target as Record<string | number, unknown>)[key];
+      }
+      return undefined;
+    }
+    if (this.ts.isAsExpression(expression) || this.ts.isSatisfiesExpression(expression) || this.ts.isNonNullExpression(expression)) {
+      return this.evaluateStaticExpression(expression.expression as TsExpression);
+    }
     if (this.ts.isStringLiteral(expression) || this.ts.isNoSubstitutionTemplateLiteral(expression)) return expression.text;
     if (this.ts.isNumericLiteral(expression)) return Number(expression.text);
     if (expression.kind === this.ts.SyntaxKind.TrueKeyword) return true;
@@ -732,6 +836,10 @@ class FrontierJsxCompiler {
   private evaluateObjectLiteral(expression: tsType.ObjectLiteralExpression): Record<string, unknown> {
     const output: Record<string, unknown> = {};
     for (const property of expression.properties) {
+      if (this.ts.isShorthandPropertyAssignment(property)) {
+        output[property.name.text] = this.evaluateStaticExpression(property.name);
+        continue;
+      }
       if (!this.ts.isPropertyAssignment(property)) {
         this.report('warning', 'Only static property assignments are compiled in Frontier JSX objects', property, 'FRONTIER_JSX_OBJECT_PROPERTY');
         continue;
@@ -749,6 +857,50 @@ class FrontierJsxCompiler {
   private propertyNameToString(name: tsType.PropertyName): string | null {
     if (this.ts.isIdentifier(name) || this.ts.isStringLiteral(name) || this.ts.isNumericLiteral(name)) return name.text;
     return null;
+  }
+
+  private lookupLocal(name: string): { found: boolean; value: unknown } {
+    for (let i = this.componentScopes.length - 1; i >= 0; i--) {
+      const locals = this.componentScopes[i].locals;
+      if (Object.prototype.hasOwnProperty.call(locals, name)) return { found: true, value: locals[name] };
+    }
+    return { found: false, value: undefined };
+  }
+
+  private tryCompileChildrenExpression(expression: TsExpression): string | null {
+    const scope = this.findChildrenScope(expression);
+    return scope ? this.compileScopeChildren(scope) : null;
+  }
+
+  private findChildrenScope(expression: TsExpression): FrontierComponentScope | null {
+    if (this.ts.isIdentifier(expression)) {
+      for (let i = this.componentScopes.length - 1; i >= 0; i--) {
+        const scope = this.componentScopes[i];
+        if (Object.prototype.hasOwnProperty.call(scope.locals, expression.text) && scope.locals[expression.text] === CHILDREN_SLOT) return scope;
+      }
+      return null;
+    }
+    if (this.ts.isPropertyAccessExpression(expression) && expression.name.text === 'children') {
+      const target = this.evaluateStaticExpression(expression.expression as TsExpression);
+      for (let i = this.componentScopes.length - 1; i >= 0; i--) {
+        const scope = this.componentScopes[i];
+        if (scope.props === target && scope.props.children === CHILDREN_SLOT) return scope;
+      }
+    }
+    return null;
+  }
+
+  private compileScopeChildren(scope: FrontierComponentScope): string {
+    if (!scope.children || scope.children.length === 0) return '';
+    if (scope.childrenHtml !== undefined) return scope.childrenHtml;
+    const previousScopes = this.componentScopes;
+    this.componentScopes = scope.childScopes.slice();
+    try {
+      scope.childrenHtml = this.compileChildren(scope.children);
+      return scope.childrenHtml;
+    } finally {
+      this.componentScopes = previousScopes;
+    }
   }
 
   private tagNameToString(name: tsType.JsxTagNameExpression): string {

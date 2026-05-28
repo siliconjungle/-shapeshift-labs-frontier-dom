@@ -279,18 +279,24 @@ JSX helpers are available from `./jsx-runtime`; they create real DOM nodes with 
 import { compileFrontierJsx } from '@shapeshift-labs/frontier-dom/compiler';
 
 const compiled = await compileFrontierJsx(`
+  function UserName({ id, path, children }) {
+    return <h1 frId={id}>{text(path, { frId: "name" })}{children}</h1>;
+  }
+
   function App() {
     return (
       <main frId="app">
-      <span frId="name" $text="/user/name" />
-      {virtualEach("/messages/*", {
-        frId: "messages",
-        keyBy: "id",
-        template: "message-row.v1",
-        viewport: { offset: 0, size: 640 },
-        layout: textLayout({ field: "body", font: "14px Inter", lineHeight: 20, width: 420 }),
-        overscan: 8
-      })}
+        <UserName id="heading" path="/user/name">
+          <small>online</small>
+        </UserName>
+        {virtualEach("/messages/*", {
+          frId: "messages",
+          keyBy: "id",
+          template: "message-row.v1",
+          viewport: { offset: 0, size: 640 },
+          layout: textLayout({ field: "body", font: "14px Inter", lineHeight: 20, width: 420 }),
+          overscan: 8
+        })}
       </main>
     );
   }
@@ -299,6 +305,8 @@ const compiled = await compileFrontierJsx(`
 compiled.html;
 compiled.manifest;
 ```
+
+The static compiler supports intrinsic tags, fragments, literal component props, simple `props.x` or destructured prop references, and component children slots. Dynamic spreads, runtime component references, and arbitrary userland expressions remain diagnostics rather than hidden runtime work.
 
 Render trace events can be sent to Frontier logging through `./logging`:
 

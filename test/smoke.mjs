@@ -20,6 +20,7 @@ import { createDomDevtoolsSink, inspectDomRenderer } from '../dist/devtools.js';
 import { createRenderLogSink } from '../dist/logging.js';
 import { parseDomHydrationScript, renderDomHydrationScript, streamDomHydrationScript } from '../dist/ssr.js';
 import {
+  Fragment,
   createJsxManifest,
   each as jsxEach,
   fixedLayout as jsxFixedLayout,
@@ -379,13 +380,26 @@ function runJsxManifestSmoke() {
             viewport: { offset: 0, size: 24 },
             layout: jsxTextLayout({ field: 'text', font: '12px Inter', lineHeight: 12, width: 120 }),
             overscan: 0
+          }),
+          jsx(Fragment, {
+            children: jsxText('/user/name', { frId: 'fragment-label' })
+          }),
+          jsx('svg', {
+            frId: 'icon',
+            viewBox: '0 0 10 10',
+            children: jsx('circle', {
+              frId: 'dot',
+              cx: 5,
+              cy: 5,
+              $attr: { r: '/radius' }
+            })
           })
         ]
       })
     );
     const manifest = createJsxManifest(root, { root: { anchor: 'panel' }, source: { kind: 'state' } });
-    assert.deepStrictEqual(manifest.bindings.map((binding) => binding.kind), ['text', 'event', 'each', 'text', 'when', 'virtualEach']);
-    const jsxState = createStateEngine({ user: { name: 'JSX' }, feature: { visible: true }, todos: [{ id: 'x', text: 'Row X' }] }, { diff: { arrayKey: 'id' } });
+    assert.deepStrictEqual(manifest.bindings.map((binding) => binding.kind), ['text', 'event', 'each', 'text', 'when', 'virtualEach', 'text', 'attr']);
+    const jsxState = createStateEngine({ user: { name: 'JSX' }, feature: { visible: true }, radius: 4, todos: [{ id: 'x', text: 'Row X' }] }, { diff: { arrayKey: 'id' } });
     const renderer = createDomRendererFromManifest({
       source: fromStateEngine(jsxState),
       target: root,
@@ -418,7 +432,13 @@ function runJsxManifestSmoke() {
       }
     });
     assert.strictEqual(root.querySelector('[data-frontier-id="label"]').textContent, 'JSX');
+    assert.strictEqual(root.querySelector('[data-frontier-id="fragment-label"]').textContent, 'JSX');
+    assert.strictEqual(root.querySelector('[data-frontier-id="icon"]').namespaceURI, 'http://www.w3.org/2000/svg');
+    assert.strictEqual(root.querySelector('[data-frontier-id="dot"]').getAttribute('r'), '4');
     assert.strictEqual(root.querySelector('[data-frontier-id="feature-slot"]').textContent, 'feature on');
+    jsxState.commitPatch([[0, ['radius'], 6]]);
+    renderer.flush();
+    assert.strictEqual(root.querySelector('[data-frontier-id="dot"]').getAttribute('r'), '6');
     jsxState.commitPatch([[0, ['feature', 'visible'], false]]);
     renderer.flush();
     assert.strictEqual(root.querySelector('[data-frontier-id="feature-slot"]').textContent, 'feature off');
@@ -522,6 +542,52 @@ async function runCompilerSmoke() {
   assert.ok(appCompiled.html.includes('data-frontier-id="todos"'));
   assert.deepStrictEqual(appCompiled.manifest.bindings.map((binding) => binding.kind), ['text', 'each', 'virtualEach']);
   assert.strictEqual(appCompiled.manifest.bindings.at(-1).layout.kind, 'fixed');
+
+  const propsCompiled = await compileFrontierJsx(`
+    function Field(props) {
+      return (
+        <label frId={props.hostId} className={props.className}>
+          <span>{props.label}</span>
+          {text(props.path, { frId: props.valueId })}
+          {props.children}
+        </label>
+      );
+    }
+    const Rows = ({ hostId, path, template }) => (
+      <ul frId={hostId} $each={{ path, fields: ["text"], keyBy: "id", template }} />
+    );
+    function App() {
+      return (
+        <section frId="props-app">
+          <Field hostId="name-field" valueId="name-value" className="field" label="Name" path="/user/name">
+            <small>required</small>
+          </Field>
+          <Rows hostId="props-todos" path="/todos/*" template="todo-row.v1" />
+        </section>
+      );
+    }
+  `, { entry: 'App' });
+  assert.deepStrictEqual(propsCompiled.diagnostics, []);
+  assert.ok(propsCompiled.html.includes('data-frontier-id="name-field"'));
+  assert.ok(propsCompiled.html.includes('<span>Name</span>'));
+  assert.ok(propsCompiled.html.includes('<small>required</small>'));
+  assert.ok(propsCompiled.html.includes('class="field"'));
+  assert.deepStrictEqual(propsCompiled.manifest.bindings.map((binding) => binding.kind), ['text', 'each']);
+  assert.strictEqual(propsCompiled.manifest.bindings[0].target.anchor, 'name-value');
+  assert.strictEqual(propsCompiled.manifest.bindings[1].container.anchor, 'props-todos');
+
+  const diagnosticCompiled = await compileFrontierJsx(`
+    function Loop() {
+      return <Loop />;
+    }
+    function App() {
+      return <main><Unknown /><Loop /><section {...props} /></main>;
+    }
+  `, { entry: 'App' });
+  assert.deepStrictEqual(
+    diagnosticCompiled.diagnostics.map((diagnostic) => diagnostic.code).filter(Boolean).sort(),
+    ['FRONTIER_JSX_RECURSIVE_COMPONENT', 'FRONTIER_JSX_SPREAD_ATTR', 'FRONTIER_JSX_UNKNOWN_COMPONENT']
+  );
 }
 
 async function runAppApiSmoke() {

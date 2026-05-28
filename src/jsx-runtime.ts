@@ -12,6 +12,30 @@ import type { WatchPath } from '@shapeshift-labs/frontier-state';
 
 export const Fragment = Symbol.for('frontier.dom.fragment');
 const FRONTIER_JSX_MARKER = Symbol.for('frontier.dom.jsx.marker');
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+const SVG_TAGS = new Set([
+  'svg',
+  'circle',
+  'clipPath',
+  'defs',
+  'ellipse',
+  'g',
+  'image',
+  'line',
+  'linearGradient',
+  'mask',
+  'path',
+  'pattern',
+  'polygon',
+  'polyline',
+  'radialGradient',
+  'rect',
+  'stop',
+  'symbol',
+  'text',
+  'tspan',
+  'use'
+]);
 
 export interface FrontierJsxManifestOptions {
   source?: FrontierDomManifestSource;
@@ -270,7 +294,11 @@ export const manifestFromDom = createJsxManifest;
 function createJsxNode(type: string | typeof Fragment | ((props: FrontierJsxProps) => Node), props: FrontierJsxProps): Node {
   if (typeof type === 'function') return type(props);
   const doc = readDocument();
-  const node = type === Fragment ? doc.createDocumentFragment() : doc.createElement(type);
+  const node = type === Fragment
+    ? doc.createDocumentFragment()
+    : SVG_TAGS.has(type)
+      ? doc.createElementNS(SVG_NAMESPACE, type)
+      : doc.createElement(type);
   applyProps(node, props);
   appendChildren(node, props.children);
   return node;
