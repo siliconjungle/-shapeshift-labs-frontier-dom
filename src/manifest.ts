@@ -173,6 +173,8 @@ export type FrontierDomRenderManifest = FrontierDomRenderManifestV1;
 export interface FrontierDomSerializationSource {
   get(): JsonValue | undefined;
   getBasis?(): number | string | undefined;
+  getHeads?(): readonly string[] | undefined;
+  getStateVector?(): Record<string, number> | undefined;
 }
 
 export interface FrontierDomSerializedState {
@@ -180,6 +182,7 @@ export interface FrontierDomSerializedState {
   version: FrontierDomManifestVersion;
   manifest: FrontierDomRenderManifestV1;
   source?: FrontierDomManifestSource;
+  html?: string;
   snapshot?: JsonValue;
   layout?: FrontierVirtualSerializedLayoutState[];
 }
@@ -188,6 +191,7 @@ export function serializeDomState(input: {
   manifest: FrontierDomRenderManifestV1;
   source?: FrontierDomSerializationSource;
   sourceMetadata?: FrontierDomManifestSource;
+  html?: string;
   snapshot?: JsonValue;
   layout?: FrontierVirtualLayoutProvider[];
   includeSnapshot?: boolean;
@@ -197,13 +201,21 @@ export function serializeDomState(input: {
     ...(manifest.source ?? {}),
     ...(input.sourceMetadata ?? {})
   };
-  if (input.source?.getBasis) source.basis = input.source.getBasis();
+  const basis = input.source?.getBasis?.();
+  if (basis !== undefined) source.basis = basis;
+  const heads = input.source?.getHeads?.();
+  if (heads !== undefined) source.heads = heads.slice().sort();
+  if (input.source?.getStateVector) {
+    const stateVector = input.source.getStateVector();
+    if (stateVector) source.stateVector = { ...stateVector };
+  }
   const out: FrontierDomSerializedState = {
     kind: 'frontier.dom.state',
     version: 1,
     manifest,
     source: Object.keys(source).length === 0 ? undefined : source
   };
+  if (input.html !== undefined) out.html = input.html;
   if (input.includeSnapshot !== false) {
     out.snapshot = input.snapshot !== undefined ? input.snapshot : input.source?.get();
   }
@@ -223,6 +235,9 @@ export function deserializeDomState(input: string | FrontierDomSerializedState):
     throw new TypeError('unsupported frontier-dom serialized state version');
   }
   assertRenderManifestV1((value as FrontierDomSerializedState).manifest);
+  if ((value as FrontierDomSerializedState).html !== undefined && typeof (value as FrontierDomSerializedState).html !== 'string') {
+    throw new TypeError('invalid frontier-dom serialized html');
+  }
   if ((value as FrontierDomSerializedState).layout) {
     for (const layout of (value as FrontierDomSerializedState).layout ?? []) {
       if (layout.kind !== 'frontier.virtual.layout' || layout.version !== 1) {

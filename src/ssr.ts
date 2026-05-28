@@ -27,7 +27,14 @@ export function createHydrationBasisEnvelope(input: {
     ...(input.manifest.source ?? {}),
     ...(input.sourceMetadata ?? {})
   };
-  if (input.source?.getBasis) source.basis = input.source.getBasis();
+  const basis = input.source?.getBasis?.();
+  if (basis !== undefined) source.basis = basis;
+  const heads = input.source?.getHeads?.();
+  if (heads !== undefined) source.heads = heads.slice().sort();
+  if (input.source?.getStateVector) {
+    const stateVector = input.source.getStateVector();
+    if (stateVector) source.stateVector = { ...stateVector };
+  }
   return Object.keys(source).length === 0 ? undefined : source;
 }
 
@@ -48,6 +55,7 @@ export function renderDomStateScript(input: {
   manifest: FrontierDomRenderManifestV1;
   source?: FrontierDomSerializationSource;
   sourceMetadata?: FrontierDomManifestSource;
+  html?: string;
   snapshot?: JsonValue;
   includeSnapshot?: boolean;
 }, options: FrontierDomHydrationScriptOptions = {}): string {

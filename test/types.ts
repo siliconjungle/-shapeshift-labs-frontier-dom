@@ -10,6 +10,7 @@ import {
   serializeDomState,
   type FrontierDomApp,
   type FrontierDomBinding,
+  type FrontierDomHydrationReport,
   type FrontierDomRenderManifestV1,
   type FrontierDomRenderer,
   type FrontierDomSource,
@@ -48,6 +49,11 @@ const initial: JsonValue = {
 
 const state = createStateEngine(initial, { diff: { arrayKey: 'id' } });
 const source: FrontierDomSource = fromStateEngine(state);
+const crdtLikeSource: FrontierDomSource = {
+  ...source,
+  getHeads: () => ['h1'],
+  getStateVector: () => ({ actor: 1 })
+};
 const renderer: FrontierDomRenderer = createDomRenderer({ source });
 const domRuntimeScheduler = {
   schedule(task: FrontierDomWorkSchedulerTask): unknown {
@@ -205,6 +211,7 @@ const manifestRenderer = createDomRendererFromManifest({
   }
 });
 const serialized = serializeDomState({ manifest, source });
+const serializedWithHtml = serializeDomState({ manifest, source: crdtLikeSource, html: '<main></main>' });
 deserializeDomState(serialized);
 
 const jsxNode = jsx('span', { frId: 'typed', $text: '/user/name' });
@@ -249,6 +256,20 @@ const appRenderer = app.mount(jsx('section', {
   ]
 }));
 const appSnapshot = app.serialize();
+let hydrationReport: FrontierDomHydrationReport | null = null;
+app.hydrate(serializedWithHtml, {
+  metadataPolicy: 'reconcile',
+  snapshotPolicy: 'warn',
+  anchorPolicy: 'rematerialize',
+  onHydrationIssue(issue, report) {
+    const kind: string = issue.kind;
+    hydrationReport = report;
+    void kind;
+  },
+  onHydrationReport(report) {
+    hydrationReport = report;
+  }
+});
 const appBuildEntry = {
   input: 'src/App.tsx',
   entry: 'App',
@@ -343,6 +364,7 @@ void jsxManifest;
 void compiled;
 void appRenderer;
 void appSnapshot;
+void hydrationReport;
 void vitePlugin;
 void hydrationCode;
 void patchBinding;

@@ -197,6 +197,7 @@ assert.strictEqual(name.data, 'Clicked');
 assert.strictEqual(effectCleanups, 4);
 
 runManifestHydrationSmoke();
+runHydrationReconciliationSmoke();
 runJsxManifestSmoke();
 await runCompilerSmoke();
 await runVitePluginSmoke();
@@ -347,6 +348,112 @@ function runManifestHydrationSmoke() {
     'b:todos'
   ]);
   hydrated.dispose();
+  dom.window.close();
+}
+
+function runHydrationReconciliationSmoke() {
+  const serverHtml =
+    '<main data-frontier-id="panel">' +
+      '<span data-frontier-id="kept">server kept</span>' +
+      '<span data-frontier-id="name">Server</span>' +
+      '<ul data-frontier-id="todos"><li data-frontier-key="a">server:a</li></ul>' +
+    '</main>';
+  const dom = new JSDOM(
+    '<!doctype html><div id="app">' +
+      '<main data-frontier-id="panel">' +
+        '<span data-frontier-id="kept">server kept</span>' +
+        '<div data-frontier-id="todos"></div>' +
+      '</main>' +
+    '</div>'
+  );
+  const root = dom.window.document.getElementById('app');
+  const kept = root.querySelector('[data-frontier-id="kept"]');
+  const clientState = createStateEngine(
+    {
+      user: { name: 'Client' },
+      todos: [
+        { id: 'a', text: 'Client A', done: false },
+        { id: 'b', text: 'Client B', done: true }
+      ]
+    },
+    { diff: { arrayKey: 'id' } }
+  );
+  const baseSource = fromStateEngine(clientState);
+  const source = {
+    ...baseSource,
+    getBasis: () => 'client-basis',
+    getHeads: () => ['h2'],
+    getStateVector: () => ({ actor: 2 })
+  };
+  const manifest = {
+    version: 1,
+    root: { anchor: 'panel' },
+    source: { kind: 'crdt', basis: 'server-basis', heads: ['h1'], stateVector: { actor: 1 } },
+    bindings: [
+      { id: 'b:name', kind: 'text', path: '/user/name', target: { anchor: 'name' } },
+      {
+        id: 'b:todos',
+        kind: 'each',
+        path: '/todos/*',
+        fields: ['text', 'done'],
+        keyBy: 'id',
+        container: { anchor: 'todos' },
+        template: 'todo-row.v1'
+      }
+    ]
+  };
+  const serialized = serializeDomState({
+    manifest,
+    html: serverHtml,
+    snapshot: { user: { name: 'Server' }, todos: [{ id: 'a', text: 'Server A', done: false }] }
+  });
+  assert.deepStrictEqual(serialized.source.heads, ['h1']);
+  assert.deepStrictEqual(serialized.source.stateVector, { actor: 1 });
+  let report;
+  const issues = [];
+  const app = createApp({
+    source,
+    target: root,
+    templates: {
+      'todo-row.v1': {
+        create(row) {
+          const item = dom.window.document.createElement('li');
+          item.textContent = formatTodo(row);
+          return item;
+        },
+        update(node, row) {
+          node.textContent = formatTodo(row);
+        }
+      }
+    }
+  });
+  app.hydrate(serialized, {
+    onHydrationIssue(issue) {
+      issues.push(issue.kind);
+    },
+    onHydrationReport(nextReport) {
+      report = nextReport;
+    }
+  });
+  assert.strictEqual(root.querySelector('[data-frontier-id="kept"]'), kept);
+  assert.strictEqual(root.querySelector('[data-frontier-id="name"]').textContent, 'Client');
+  assert.strictEqual(root.querySelector('[data-frontier-id="todos"]').localName, 'ul');
+  assert.deepStrictEqual(
+    Array.from(root.querySelectorAll('[data-frontier-id="todos"] li'), (item) => item.textContent),
+    ['a:Client A:open', 'b:Client B:done']
+  );
+  for (const kind of ['basis', 'snapshot', 'heads', 'stateVector', 'missing-anchor', 'stale-anchor', 'rematerialized-anchor']) {
+    assert.ok(issues.includes(kind), 'expected hydration issue: ' + kind);
+  }
+  assert.deepStrictEqual(report.missingAnchors, ['name']);
+  assert.deepStrictEqual(report.staleAnchors, ['todos']);
+  assert.ok(report.rematerializedAnchors.includes('name'));
+  assert.ok(report.rematerializedAnchors.includes('todos'));
+  assert.strictEqual(app.hydrationReport, report);
+  clientState.commitPatch([[0, ['user', 'name'], 'Client Updated']]);
+  app.flush();
+  assert.strictEqual(root.querySelector('[data-frontier-id="name"]').textContent, 'Client Updated');
+  app.dispose();
   dom.window.close();
 }
 

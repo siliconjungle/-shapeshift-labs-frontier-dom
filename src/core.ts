@@ -22,6 +22,8 @@ export type FrontierPatchStatePatchCommitOptions = Record<string, unknown>;
 type FrontierPatchStateEngineLike = StateEngine & {
   commitPatch(patch: FrontierPatchStatePatchInput, options?: FrontierPatchStatePatchCommitOptions): JsonValue | undefined;
   getBasis?(): number | string | undefined;
+  getHeads?(): readonly string[] | undefined;
+  getStateVector?(): Record<string, number> | undefined;
 };
 
 export interface FrontierPatchRenderSource {
@@ -29,6 +31,8 @@ export interface FrontierPatchRenderSource {
   watch(options: WatchOptions, callback: FrontierPatchRenderCallback): PatchSubscription;
   commitPatch?(patch: FrontierPatchStatePatchInput, options?: FrontierPatchStatePatchCommitOptions): JsonValue | undefined;
   getBasis?(): number | string | undefined;
+  getHeads?(): readonly string[] | undefined;
+  getStateVector?(): Record<string, number> | undefined;
 }
 
 export interface FrontierPatchRenderScheduler {
@@ -223,7 +227,9 @@ export function fromStateEngine(engine: StateEngine): FrontierPatchRenderSource 
     get: () => stateEngine.get(),
     watch: (options, callback) => stateEngine.watch(options, callback),
     commitPatch: (patch, options) => stateEngine.commitPatch(patch, options),
-    getBasis: stateEngine.getBasis ? () => stateEngine.getBasis?.() : undefined
+    getBasis: stateEngine.getBasis ? () => stateEngine.getBasis?.() : undefined,
+    getHeads: stateEngine.getHeads ? () => stateEngine.getHeads?.() : undefined,
+    getStateVector: stateEngine.getStateVector ? () => stateEngine.getStateVector?.() : undefined
   };
 }
 

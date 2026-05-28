@@ -135,7 +135,7 @@ app.mount(
 );
 ```
 
-Production builds should prefer the compiler path. The optional `./compiler` subpath lowers a static TSX entry to HTML plus a serializable manifest, and `createApp().mount(compiled)` hydrates it:
+Production builds should prefer the compiler path. The optional `./compiler` subpath lowers a static TSX entry to HTML plus a serializable manifest, and `createApp().hydrate(compiled)` reconciles existing server DOM before binding it:
 
 ```ts
 import { createApp, fromStateEngine } from '@shapeshift-labs/frontier-dom';
@@ -144,7 +144,30 @@ import { compileFrontierJsx } from '@shapeshift-labs/frontier-dom/compiler';
 const compiled = await compileFrontierJsx(sourceText, { entry: 'App' });
 const app = createApp({ source: fromStateEngine(state), target: '#app', templates });
 
-app.mount(compiled);
+app.hydrate(compiled);
+```
+
+Hydration is patch-native. Serialized payloads can carry the server HTML, source basis, CRDT heads/state vectors, and a server snapshot. `hydrate()` compares those against the current client source, reports mismatches, repairs missing or stale `data-frontier-id` anchors from the server skeleton, then lets bindings render the current client state:
+
+```ts
+const state = {
+  kind: 'frontier.dom.state',
+  version: 1,
+  html,
+  manifest,
+  source: { basis: serverBasis, heads: serverHeads, stateVector: serverStateVector },
+  snapshot: serverSnapshot
+};
+
+const renderer = app.hydrate(state, {
+  basisPolicy: 'reconcile',
+  metadataPolicy: 'reconcile',
+  snapshotPolicy: 'reconcile',
+  anchorPolicy: 'rematerialize',
+  onHydrationReport(report) {
+    console.log(report.issues);
+  }
+});
 ```
 
 The lower-level binding API remains available for explicit host control:
@@ -466,6 +489,7 @@ The matrix runs compiler HTML/manifest snapshots in Node, then exercises these f
 - delegated events
 - forms, selection, and IME composition
 - focus preservation during keyed row movement
+- hydration reconciliation for source metadata, snapshots, missing anchors, and stale anchors
 
 ## Benchmarks
 

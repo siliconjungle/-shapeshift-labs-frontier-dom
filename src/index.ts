@@ -36,6 +36,8 @@ export type FrontierDomStatePatchCommitOptions = Record<string, unknown>;
 type FrontierDomStateEngineLike = StateEngine & {
   commitPatch(patch: FrontierDomStatePatchInput, options?: FrontierDomStatePatchCommitOptions): JsonValue | undefined;
   getBasis?(): number | string | undefined;
+  getHeads?(): readonly string[] | undefined;
+  getStateVector?(): Record<string, number> | undefined;
 };
 
 export interface FrontierDomSource {
@@ -43,6 +45,8 @@ export interface FrontierDomSource {
   watch(options: WatchOptions, callback: FrontierDomWatchCallback): PatchSubscription;
   commitPatch?(patch: FrontierDomStatePatchInput, options?: FrontierDomStatePatchCommitOptions): JsonValue | undefined;
   getBasis?(): number | string | undefined;
+  getHeads?(): readonly string[] | undefined;
+  getStateVector?(): Record<string, number> | undefined;
 }
 
 export interface FrontierDomScheduler {
@@ -91,6 +95,8 @@ export interface FrontierDomPatchSourceLike {
   watch(options: WatchOptions, callback: FrontierDomWatchCallback): PatchSubscription;
   commitPatch?(patch: FrontierDomStatePatchInput, options?: FrontierDomStatePatchCommitOptions): JsonValue | undefined;
   getBasis?(): number | string | undefined;
+  getHeads?(): readonly string[] | undefined;
+  getStateVector?(): Record<string, number> | undefined;
 }
 
 export interface FrontierDomQuerySourceLike {
@@ -528,7 +534,11 @@ export interface FrontierDomManifestRendererOptions extends FrontierDomRendererO
   onBasisMismatch?: (mismatch: FrontierDomHydrationBasisMismatch) => void;
 }
 
-export type FrontierDomHydrationBasisPolicy = 'ignore' | 'warn' | 'error';
+export type FrontierDomHydrationReconcilePolicy = 'ignore' | 'warn' | 'error' | 'reconcile';
+
+export type FrontierDomHydrationBasisPolicy = FrontierDomHydrationReconcilePolicy;
+
+export type FrontierDomHydrationAnchorPolicy = 'error' | 'warn' | 'rematerialize';
 
 export interface FrontierDomHydrationBasisMismatch {
   expected: number | string | undefined;
@@ -536,11 +546,45 @@ export interface FrontierDomHydrationBasisMismatch {
   manifest: FrontierDomRenderManifestV1;
 }
 
+export type FrontierDomHydrationIssueKind =
+  | 'basis'
+  | 'snapshot'
+  | 'heads'
+  | 'stateVector'
+  | 'missing-anchor'
+  | 'stale-anchor'
+  | 'rematerialized-anchor'
+  | 'rematerialized-root';
+
+export interface FrontierDomHydrationIssue {
+  kind: FrontierDomHydrationIssueKind;
+  bindingId?: string;
+  anchor?: string;
+  selector?: string;
+  expected?: unknown;
+  actual?: unknown;
+  message: string;
+}
+
+export interface FrontierDomHydrationReport {
+  issues: FrontierDomHydrationIssue[];
+  reusedAnchors: string[];
+  missingAnchors: string[];
+  staleAnchors: string[];
+  rematerializedAnchors: string[];
+  source?: {
+    expected?: FrontierDomManifestSource;
+    actual?: FrontierDomManifestSource;
+  };
+  snapshotMatched?: boolean;
+}
+
 export interface FrontierDomSerializedState {
   kind: 'frontier.dom.state';
   version: FrontierDomManifestVersion;
   manifest: FrontierDomRenderManifestV1;
   source?: FrontierDomManifestSource;
+  html?: string;
   snapshot?: JsonValue;
   layout?: FrontierVirtualSerializedLayoutState[];
 }
@@ -575,12 +619,24 @@ export interface FrontierDomAppMountOptions extends FrontierDomManifestRegistry 
   root?: FrontierDomManifestRoot;
 }
 
+export interface FrontierDomAppHydrateOptions extends FrontierDomAppMountOptions {
+  html?: string;
+  snapshot?: JsonValue;
+  reconcile?: boolean;
+  snapshotPolicy?: FrontierDomHydrationReconcilePolicy;
+  metadataPolicy?: FrontierDomHydrationReconcilePolicy;
+  anchorPolicy?: FrontierDomHydrationAnchorPolicy;
+  onHydrationIssue?: (issue: FrontierDomHydrationIssue, report: FrontierDomHydrationReport) => void;
+  onHydrationReport?: (report: FrontierDomHydrationReport) => void;
+}
+
 export interface FrontierDomApp {
   readonly source: FrontierDomSource;
   readonly target: ParentNode | null;
   readonly renderer: FrontierDomRenderer | null;
+  readonly hydrationReport: FrontierDomHydrationReport | null;
   mount(view: FrontierDomAppView, options?: FrontierDomAppMountOptions): FrontierDomRenderer;
-  hydrate(view: FrontierDomRenderManifestV1 | FrontierDomSerializedState | FrontierDomCompiledView, options?: FrontierDomAppMountOptions): FrontierDomRenderer;
+  hydrate(view: FrontierDomRenderManifestV1 | FrontierDomSerializedState | FrontierDomCompiledView, options?: FrontierDomAppHydrateOptions): FrontierDomRenderer;
   serialize(options?: Omit<Parameters<typeof serializeDomState>[0], 'manifest' | 'source'>): FrontierDomSerializedState;
   flush(): void;
   dispose(): void;
@@ -604,6 +660,36 @@ type EachEntry<TNode extends Node = Node> = {
   node: TNode;
 };
 
+type HydrationView = {
+  manifest: FrontierDomRenderManifestV1;
+  html?: string;
+  snapshot?: JsonValue;
+  sourceMetadata?: FrontierDomManifestSource;
+};
+
+type HydrationMetadataOptions = {
+  basisPolicy: FrontierDomHydrationBasisPolicy;
+  metadataPolicy: FrontierDomHydrationReconcilePolicy;
+  snapshotPolicy: FrontierDomHydrationReconcilePolicy;
+  onBasisMismatch?: (mismatch: FrontierDomHydrationBasisMismatch) => void;
+  onHydrationIssue?: (issue: FrontierDomHydrationIssue, report: FrontierDomHydrationReport) => void;
+};
+
+type HydrationDomOptions = {
+  anchorPolicy: FrontierDomHydrationAnchorPolicy;
+  onHydrationIssue?: (issue: FrontierDomHydrationIssue, report: FrontierDomHydrationReport) => void;
+};
+
+type HydrationTargetRef = {
+  bindingId?: string;
+  target: FrontierDomNodeTarget;
+  root?: boolean;
+};
+
+type FrontierDomResolvedMountOptions = Required<Pick<FrontierDomAppMountOptions, 'replace' | 'hydrateExisting' | 'basisPolicy'>> &
+  FrontierDomManifestRegistry &
+  Pick<FrontierDomAppMountOptions, 'onBasisMismatch' | 'manifestSource' | 'root'>;
+
 const EMPTY_PATCH: Patch = [];
 const DEFAULT_TRACE_LIMIT = 2048;
 const PATCH_VALUE_NOT_FOUND = Symbol('frontierDomPatchValueNotFound');
@@ -622,7 +708,9 @@ export function fromStateEngine(engine: StateEngine): FrontierDomSource {
     get: () => stateEngine.get(),
     watch: (options, callback) => stateEngine.watch(options, callback),
     commitPatch: (patch, options) => stateEngine.commitPatch(patch, options),
-    getBasis: stateEngine.getBasis ? () => stateEngine.getBasis?.() : undefined
+    getBasis: stateEngine.getBasis ? () => stateEngine.getBasis?.() : undefined,
+    getHeads: stateEngine.getHeads ? () => stateEngine.getHeads?.() : undefined,
+    getStateVector: stateEngine.getStateVector ? () => stateEngine.getStateVector?.() : undefined
   };
 }
 
@@ -633,7 +721,9 @@ export function fromPatchSource(source: FrontierDomPatchSourceLike): FrontierDom
     commitPatch: source.commitPatch
       ? (patch, options) => source.commitPatch?.(patch, options)
       : undefined,
-    getBasis: source.getBasis ? () => source.getBasis?.() : undefined
+    getBasis: source.getBasis ? () => source.getBasis?.() : undefined,
+    getHeads: source.getHeads ? () => source.getHeads?.() : undefined,
+    getStateVector: source.getStateVector ? () => source.getStateVector?.() : undefined
   };
 }
 
@@ -731,6 +821,7 @@ export function serializeDomState(input: {
   manifest: FrontierDomRenderManifestV1;
   source?: FrontierDomSource;
   sourceMetadata?: FrontierDomManifestSource;
+  html?: string;
   snapshot?: JsonValue;
   layout?: FrontierVirtualLayoutProvider[];
   includeSnapshot?: boolean;
@@ -738,15 +829,16 @@ export function serializeDomState(input: {
   const manifest = assertRenderManifestV1(input.manifest);
   const source: FrontierDomManifestSource = {
     ...(manifest.source ?? {}),
-    ...(input.sourceMetadata ?? {})
+    ...(input.sourceMetadata ?? {}),
+    ...readSourceMetadata(input.source)
   };
-  if (input.source?.getBasis) source.basis = input.source.getBasis();
   const out: FrontierDomSerializedState = {
     kind: 'frontier.dom.state',
     version: 1,
     manifest,
     source: Object.keys(source).length === 0 ? undefined : source
   };
+  if (input.html !== undefined) out.html = input.html;
   if (input.includeSnapshot !== false) {
     out.snapshot = input.snapshot !== undefined ? input.snapshot : input.source?.get();
   }
@@ -766,6 +858,9 @@ export function deserializeDomState(input: string | FrontierDomSerializedState):
     throw new TypeError('unsupported frontier-dom serialized state version');
   }
   assertRenderManifestV1((value as FrontierDomSerializedState).manifest);
+  if ((value as FrontierDomSerializedState).html !== undefined && typeof (value as FrontierDomSerializedState).html !== 'string') {
+    throw new TypeError('invalid frontier-dom serialized html');
+  }
   if ((value as FrontierDomSerializedState).layout) {
     for (const layout of (value as FrontierDomSerializedState).layout ?? []) {
       if (layout.kind !== 'frontier.virtual.layout' || layout.version !== 1) {
@@ -789,9 +884,262 @@ export function assertRenderManifestV1(manifest: FrontierDomRenderManifestV1): F
   return manifest;
 }
 
+function normalizeHydrationView(
+  view: FrontierDomRenderManifestV1 | FrontierDomSerializedState | FrontierDomCompiledView,
+  options: FrontierDomAppHydrateOptions,
+  mountOptions: FrontierDomResolvedMountOptions
+): HydrationView {
+  if (isSerializedDomState(view)) {
+    const manifest = mergeManifestMetadata(view.manifest, view.source, mountOptions.manifestSource, mountOptions.root);
+    return {
+      manifest,
+      html: options.html ?? view.html,
+      snapshot: options.snapshot !== undefined ? options.snapshot : view.snapshot,
+      sourceMetadata: manifest.source
+    };
+  }
+  if (isCompiledView(view)) {
+    const manifest = mergeManifestMetadata(view.manifest, mountOptions.manifestSource, undefined, mountOptions.root);
+    return {
+      manifest,
+      html: options.html ?? view.html,
+      snapshot: options.snapshot,
+      sourceMetadata: manifest.source
+    };
+  }
+  if (isRenderManifest(view)) {
+    const manifest = mergeManifestMetadata(view, mountOptions.manifestSource, undefined, mountOptions.root);
+    return {
+      manifest,
+      html: options.html,
+      snapshot: options.snapshot,
+      sourceMetadata: manifest.source
+    };
+  }
+  throw new TypeError('frontier-dom app hydrate() requires a manifest, serialized state, or compiled view');
+}
+
+function createHydrationReport(
+  manifest: FrontierDomRenderManifestV1,
+  sourceMetadata: FrontierDomManifestSource | undefined,
+  snapshot: JsonValue | undefined,
+  source: FrontierDomSource
+): FrontierDomHydrationReport {
+  const expected = mergeSourceMetadata(manifest.source, sourceMetadata);
+  const actualSource = readSourceMetadata(source);
+  const actual = Object.keys(actualSource).length === 0 ? undefined : actualSource;
+  const report: FrontierDomHydrationReport = {
+    issues: [],
+    reusedAnchors: [],
+    missingAnchors: [],
+    staleAnchors: [],
+    rematerializedAnchors: []
+  };
+  if (expected || actual) report.source = { expected, actual };
+  if (snapshot !== undefined) report.snapshotMatched = jsonValueEqual(snapshot, source.get());
+  return report;
+}
+
+function reconcileHydrationMetadata(
+  manifest: FrontierDomRenderManifestV1,
+  report: FrontierDomHydrationReport,
+  options: HydrationMetadataOptions
+): void {
+  const expected = report.source?.expected;
+  const actual = report.source?.actual;
+  if (expected?.basis !== undefined && expected.basis !== actual?.basis) {
+    const mismatch: FrontierDomHydrationBasisMismatch = { expected: expected.basis, actual: actual?.basis, manifest };
+    if (options.basisPolicy !== 'ignore') options.onBasisMismatch?.(mismatch);
+    handleHydrationIssue(report, {
+      kind: 'basis',
+      expected: expected.basis,
+      actual: actual?.basis,
+      message: 'frontier-dom hydration basis mismatch'
+    }, options.basisPolicy, options.onHydrationIssue);
+  }
+  if (expected?.heads !== undefined && !stringArrayEqual(normalizeHeads(expected.heads), normalizeHeads(actual?.heads))) {
+    handleHydrationIssue(report, {
+      kind: 'heads',
+      expected: normalizeHeads(expected.heads),
+      actual: normalizeHeads(actual?.heads),
+      message: 'frontier-dom hydration CRDT heads mismatch'
+    }, options.metadataPolicy, options.onHydrationIssue);
+  }
+  if (expected?.stateVector !== undefined && !stateVectorEqual(expected.stateVector, actual?.stateVector)) {
+    handleHydrationIssue(report, {
+      kind: 'stateVector',
+      expected: cloneStateVector(expected.stateVector),
+      actual: cloneStateVector(actual?.stateVector),
+      message: 'frontier-dom hydration CRDT state vector mismatch'
+    }, options.metadataPolicy, options.onHydrationIssue);
+  }
+  if (report.snapshotMatched === false) {
+    handleHydrationIssue(report, {
+      kind: 'snapshot',
+      expected: true,
+      actual: false,
+      message: 'frontier-dom hydration snapshot differs from the current client state'
+    }, options.snapshotPolicy, options.onHydrationIssue);
+  }
+}
+
+function reconcileHydrationDom(
+  target: ParentNode,
+  manifest: FrontierDomRenderManifestV1,
+  html: string | undefined,
+  report: FrontierDomHydrationReport,
+  options: HydrationDomOptions
+): void {
+  const skeleton = html ? parseHydrationSkeleton(target, html) : null;
+  if (skeleton && target.childNodes.length === 0) {
+    target.appendChild(skeleton.cloneNode(true));
+    addHydrationIssue(report, {
+      kind: 'rematerialized-root',
+      anchor: manifest.root?.anchor,
+      selector: manifest.root?.selector,
+      message: 'frontier-dom hydration materialized server HTML into an empty target'
+    }, options.onHydrationIssue);
+  }
+
+  if (manifest.root && skeleton) {
+    const currentRoot = tryResolveNodeTarget(target, manifest.root);
+    const serverRoot = tryResolveNodeTarget(skeleton, manifest.root);
+    if (!currentRoot && serverRoot) {
+      materializeHydrationNode(target, skeleton, serverRoot);
+      addHydrationIssue(report, {
+        kind: 'rematerialized-root',
+        anchor: manifest.root.anchor,
+        selector: manifest.root.selector,
+        message: 'frontier-dom hydration rematerialized the manifest root'
+      }, options.onHydrationIssue);
+    } else if (currentRoot && serverRoot && isStaleHydrationNode(currentRoot, serverRoot) && currentRoot.parentNode) {
+      currentRoot.parentNode.replaceChild(serverRoot.cloneNode(true), currentRoot);
+      addHydrationIssue(report, {
+        kind: 'rematerialized-root',
+        anchor: manifest.root.anchor,
+        selector: manifest.root.selector,
+        message: 'frontier-dom hydration replaced a stale manifest root'
+      }, options.onHydrationIssue);
+    }
+  }
+
+  const root = tryResolveManifestRoot(manifest, target) ?? target;
+  const skeletonRoot = skeleton ? tryResolveManifestRoot(manifest, skeleton) ?? skeleton : null;
+  const refs = collectHydrationTargets(manifest);
+  const seen = new Set<string>();
+  for (let i = 0; i < refs.length; i++) {
+    const ref = refs[i];
+    const cacheKey = targetCacheKey(ref.target);
+    if (seen.has(cacheKey)) continue;
+    seen.add(cacheKey);
+    const current = tryResolveNodeTarget(root, ref.target);
+    const server = skeletonRoot ? tryResolveNodeTarget(skeletonRoot, ref.target) : null;
+    if (current) {
+      if (ref.target.anchor) pushUnique(report.reusedAnchors, ref.target.anchor);
+      if (server && isStaleHydrationNode(current, server)) {
+        recordHydrationTargetState(report, 'staleAnchors', ref);
+        addHydrationIssue(report, {
+          kind: 'stale-anchor',
+          bindingId: ref.bindingId,
+          anchor: ref.target.anchor,
+          selector: ref.target.selector,
+          expected: describeHydrationNode(server),
+          actual: describeHydrationNode(current),
+          message: 'frontier-dom hydration found a stale DOM anchor'
+        }, options.onHydrationIssue);
+        if (current.parentNode) {
+          current.parentNode.replaceChild(server.cloneNode(true), current);
+          recordHydrationTargetState(report, 'rematerializedAnchors', ref);
+          addHydrationIssue(report, {
+            kind: 'rematerialized-anchor',
+            bindingId: ref.bindingId,
+            anchor: ref.target.anchor,
+            selector: ref.target.selector,
+            message: 'frontier-dom hydration replaced a stale DOM anchor'
+          }, options.onHydrationIssue);
+        }
+      }
+      continue;
+    }
+
+    recordHydrationTargetState(report, 'missingAnchors', ref);
+    addHydrationIssue(report, {
+      kind: 'missing-anchor',
+      bindingId: ref.bindingId,
+      anchor: ref.target.anchor,
+      selector: ref.target.selector,
+      message: 'frontier-dom hydration manifest target is missing from the DOM'
+    }, options.onHydrationIssue);
+    if (skeletonRoot && server && options.anchorPolicy === 'rematerialize') {
+      const mounted = materializeHydrationNode(root, skeletonRoot, server);
+      if (mounted) {
+        recordHydrationTargetState(report, 'rematerializedAnchors', ref);
+        addHydrationIssue(report, {
+          kind: 'rematerialized-anchor',
+          bindingId: ref.bindingId,
+          anchor: ref.target.anchor,
+          selector: ref.target.selector,
+          message: 'frontier-dom hydration rematerialized a missing DOM anchor'
+        }, options.onHydrationIssue);
+        continue;
+      }
+    }
+    if (options.anchorPolicy === 'error' || options.anchorPolicy === 'rematerialize') {
+      throw new TypeError('frontier-dom hydration target was not found: ' + describeHydrationTarget(ref.target));
+    }
+    warnHydrationIssue({
+      kind: 'missing-anchor',
+      bindingId: ref.bindingId,
+      anchor: ref.target.anchor,
+      selector: ref.target.selector,
+      message: 'frontier-dom hydration target was not found: ' + describeHydrationTarget(ref.target)
+    });
+  }
+}
+
+function mergeManifestMetadata(
+  manifest: FrontierDomRenderManifestV1,
+  first?: FrontierDomManifestSource,
+  second?: FrontierDomManifestSource,
+  root?: FrontierDomManifestRoot
+): FrontierDomRenderManifestV1 {
+  const source = mergeSourceMetadata(manifest.source, first, second);
+  const next: FrontierDomRenderManifestV1 = { ...manifest };
+  if (source) next.source = source;
+  else delete next.source;
+  if (root) next.root = root;
+  return assertRenderManifestV1(next);
+}
+
+function mergeSourceMetadata(
+  ...sources: Array<FrontierDomManifestSource | undefined>
+): FrontierDomManifestSource | undefined {
+  const out: FrontierDomManifestSource = {};
+  for (let i = 0; i < sources.length; i++) {
+    const source = sources[i];
+    if (!source) continue;
+    Object.assign(out, source);
+    if (source.heads) out.heads = normalizeHeads(source.heads);
+    if (source.stateVector) out.stateVector = cloneStateVector(source.stateVector);
+  }
+  return Object.keys(out).length === 0 ? undefined : out;
+}
+
+function readSourceMetadata(source: FrontierDomSource | undefined): FrontierDomManifestSource {
+  const metadata: FrontierDomManifestSource = {};
+  const basis = source?.getBasis?.();
+  if (basis !== undefined) metadata.basis = basis;
+  const heads = source?.getHeads?.();
+  if (heads !== undefined) metadata.heads = normalizeHeads(heads);
+  const stateVector = source?.getStateVector?.();
+  if (stateVector !== undefined) metadata.stateVector = cloneStateVector(stateVector);
+  return metadata;
+}
+
 class DomApp implements FrontierDomApp {
   private rendererValue: FrontierDomRenderer | null = null;
   private manifestValue: FrontierDomRenderManifestV1 | null = null;
+  private hydrationReportValue: FrontierDomHydrationReport | null = null;
   private targetValue: ParentNode | null;
 
   constructor(private readonly options: FrontierDomAppOptions) {
@@ -810,21 +1158,26 @@ class DomApp implements FrontierDomApp {
     return this.rendererValue;
   }
 
+  get hydrationReport(): FrontierDomHydrationReport | null {
+    return this.hydrationReportValue;
+  }
+
   mount(view: FrontierDomAppView, options: FrontierDomAppMountOptions = {}): FrontierDomRenderer {
     this.rendererValue?.dispose();
+    this.hydrationReportValue = null;
     const mountOptions = this.mergeMountOptions(options);
     let manifest: FrontierDomRenderManifestV1;
     let target = this.targetValue;
 
-    if (isCompiledView(view)) {
+    if (isSerializedDomState(view)) {
+      manifest = mergeManifestMetadata(view.manifest, view.source, mountOptions.manifestSource, mountOptions.root);
+    } else if (isCompiledView(view)) {
       target = target ?? resolveAppTarget(this.options.target ?? null);
       if (!target) throw new TypeError('frontier-dom app compiled views require a target');
       writeCompiledHtml(target, view.html, mountOptions.replace);
-      manifest = view.manifest;
-    } else if (isSerializedDomState(view)) {
-      manifest = view.manifest;
+      manifest = mergeManifestMetadata(view.manifest, mountOptions.manifestSource, undefined, mountOptions.root);
     } else if (isRenderManifest(view)) {
-      manifest = view;
+      manifest = mergeManifestMetadata(view, mountOptions.manifestSource, undefined, mountOptions.root);
     } else {
       if (!isParentNodeLike(view)) throw new TypeError('frontier-dom app mount() requires a JSX ParentNode, manifest, serialized state, or compiled view');
       manifest = createJsxManifest(view, {
@@ -856,9 +1209,50 @@ class DomApp implements FrontierDomApp {
 
   hydrate(
     view: FrontierDomRenderManifestV1 | FrontierDomSerializedState | FrontierDomCompiledView,
-    options: FrontierDomAppMountOptions = {}
+    options: FrontierDomAppHydrateOptions = {}
   ): FrontierDomRenderer {
-    return this.mount(view, { ...options, replace: options.replace ?? false });
+    this.rendererValue?.dispose();
+    const mountOptions = this.mergeMountOptions({
+      ...options,
+      basisPolicy: options.basisPolicy ?? this.options.basisPolicy ?? 'reconcile',
+      replace: options.replace ?? false
+    });
+    const hydration = normalizeHydrationView(view, options, mountOptions);
+    let target = this.targetValue ?? resolveAppTarget(this.options.target ?? null);
+    if (!target) throw new TypeError('frontier-dom app hydrate() requires a target');
+    const report = createHydrationReport(hydration.manifest, hydration.sourceMetadata, hydration.snapshot, this.options.source);
+    reconcileHydrationMetadata(hydration.manifest, report, {
+      basisPolicy: mountOptions.basisPolicy,
+      metadataPolicy: options.metadataPolicy ?? 'reconcile',
+      snapshotPolicy: options.snapshotPolicy ?? 'reconcile',
+      onBasisMismatch: mountOptions.onBasisMismatch,
+      onHydrationIssue: options.onHydrationIssue
+    });
+    if (options.reconcile !== false) {
+      reconcileHydrationDom(target, hydration.manifest, hydration.html, report, {
+        anchorPolicy: options.anchorPolicy ?? 'rematerialize',
+        onHydrationIssue: options.onHydrationIssue
+      });
+    }
+    this.targetValue = target;
+    this.manifestValue = hydration.manifest;
+    this.hydrationReportValue = report;
+    this.rendererValue = createDomRendererFromManifest({
+      source: this.options.source,
+      target,
+      scheduler: this.options.scheduler,
+      trace: this.options.trace,
+      manifest: hydration.manifest,
+      templates: mountOptions.templates,
+      actions: mountOptions.actions,
+      actionRegistry: mountOptions.actionRegistry,
+      formatters: mountOptions.formatters,
+      layouts: mountOptions.layouts,
+      hydrateExisting: mountOptions.hydrateExisting,
+      basisPolicy: 'ignore'
+    });
+    options.onHydrationReport?.(report);
+    return this.rendererValue;
   }
 
   serialize(options: Omit<Parameters<typeof serializeDomState>[0], 'manifest' | 'source'> = {}): FrontierDomSerializedState {
@@ -878,11 +1272,10 @@ class DomApp implements FrontierDomApp {
     this.rendererValue?.dispose();
     this.rendererValue = null;
     this.manifestValue = null;
+    this.hydrationReportValue = null;
   }
 
-  private mergeMountOptions(options: FrontierDomAppMountOptions): Required<Pick<FrontierDomAppMountOptions, 'replace' | 'hydrateExisting' | 'basisPolicy'>> &
-    FrontierDomManifestRegistry &
-    Pick<FrontierDomAppMountOptions, 'onBasisMismatch' | 'manifestSource' | 'root'> {
+  private mergeMountOptions(options: FrontierDomAppMountOptions): FrontierDomResolvedMountOptions {
     return {
       replace: options.replace ?? this.options.replace ?? true,
       hydrateExisting: options.hydrateExisting ?? this.options.hydrateExisting ?? true,
@@ -1962,6 +2355,210 @@ function queryRoot(root: ParentNode, selector: string): Element | null {
   return typeof root.querySelector === 'function' ? root.querySelector(selector) : null;
 }
 
+function tryResolveManifestRoot(manifest: FrontierDomRenderManifestV1, target: ParentNode | null): ParentNode | null {
+  const root = target ?? readGlobalDocument();
+  if (!manifest.root) return root;
+  const node = tryResolveNodeTarget(root, manifest.root);
+  return isParentNodeLike(node) ? node : null;
+}
+
+function tryResolveNodeTarget(root: ParentNode, target: FrontierDomNodeTarget | undefined): Node | null {
+  if (!target || (!target.anchor && !target.selector)) return null;
+  if (target.selector) {
+    const selected = queryRoot(root, target.selector);
+    if (selected) return selected;
+  }
+  if (target.anchor) {
+    const selected = queryRoot(root, '[data-frontier-id="' + escapeCssAttribute(target.anchor) + '"]');
+    if (selected) return selected;
+  }
+  return null;
+}
+
+function parseHydrationSkeleton(target: ParentNode, html: string): DocumentFragment {
+  const doc = (target as Node).ownerDocument ?? readGlobalDocument();
+  const template = doc.createElement('template');
+  template.innerHTML = html;
+  return template.content;
+}
+
+function collectHydrationTargets(manifest: FrontierDomRenderManifestV1): HydrationTargetRef[] {
+  const refs: HydrationTargetRef[] = [];
+  if (manifest.root) refs[refs.length] = { target: manifest.root, root: true };
+  for (let i = 0; i < manifest.bindings.length; i++) {
+    const binding = manifest.bindings[i];
+    if (binding.target) refs[refs.length] = { bindingId: binding.id, target: binding.target };
+    if ((binding.kind === 'each' || binding.kind === 'virtualEach') && binding.container) {
+      refs[refs.length] = { bindingId: binding.id, target: binding.container };
+    }
+  }
+  return refs;
+}
+
+function isStaleHydrationNode(current: Node, expected: Node): boolean {
+  if (current.nodeType !== expected.nodeType) return true;
+  if (!isElementLike(current) || !isElementLike(expected)) return false;
+  return current.localName !== expected.localName || current.namespaceURI !== expected.namespaceURI;
+}
+
+function materializeHydrationNode(root: ParentNode, skeletonRoot: ParentNode, serverNode: Node): boolean {
+  const parent = resolveHydrationInsertParent(root, skeletonRoot, serverNode);
+  if (!parent) return false;
+  const clone = serverNode.cloneNode(true);
+  const before = findHydrationNextSibling(parent, root, serverNode);
+  if (before) parent.insertBefore(clone, before);
+  else {
+    const after = findHydrationPreviousSibling(parent, root, serverNode);
+    if (after && after.parentNode === parent) parent.insertBefore(clone, after.nextSibling);
+    else parent.appendChild(clone);
+  }
+  return true;
+}
+
+function resolveHydrationInsertParent(root: ParentNode, skeletonRoot: ParentNode, serverNode: Node): ParentNode | null {
+  let parent = serverNode.parentNode;
+  while (parent && parent !== skeletonRoot) {
+    if (isElementLike(parent)) {
+      const anchor = parent.getAttribute('data-frontier-id');
+      if (anchor) {
+        const current = queryRoot(root, '[data-frontier-id="' + escapeCssAttribute(anchor) + '"]');
+        if (current) return current;
+      }
+    }
+    parent = parent.parentNode;
+  }
+  return root;
+}
+
+function findHydrationNextSibling(parent: ParentNode, root: ParentNode, serverNode: Node): Node | null {
+  let sibling = serverNode.nextSibling;
+  while (sibling) {
+    const current = findCurrentNodeForServerSibling(root, sibling);
+    if (current && current.parentNode === parent) return current;
+    sibling = sibling.nextSibling;
+  }
+  return null;
+}
+
+function findHydrationPreviousSibling(parent: ParentNode, root: ParentNode, serverNode: Node): Node | null {
+  let sibling = serverNode.previousSibling;
+  while (sibling) {
+    const current = findCurrentNodeForServerSibling(root, sibling);
+    if (current && current.parentNode === parent) return current;
+    sibling = sibling.previousSibling;
+  }
+  return null;
+}
+
+function findCurrentNodeForServerSibling(root: ParentNode, sibling: Node): Node | null {
+  if (!isElementLike(sibling)) return null;
+  const anchor = sibling.getAttribute('data-frontier-id');
+  if (!anchor) return null;
+  return queryRoot(root, '[data-frontier-id="' + escapeCssAttribute(anchor) + '"]');
+}
+
+function recordHydrationTargetState(
+  report: FrontierDomHydrationReport,
+  field: 'missingAnchors' | 'staleAnchors' | 'rematerializedAnchors',
+  ref: HydrationTargetRef
+): void {
+  if (ref.target.anchor) pushUnique(report[field], ref.target.anchor);
+}
+
+function addHydrationIssue(
+  report: FrontierDomHydrationReport,
+  issue: FrontierDomHydrationIssue,
+  onHydrationIssue?: (issue: FrontierDomHydrationIssue, report: FrontierDomHydrationReport) => void
+): void {
+  report.issues[report.issues.length] = issue;
+  onHydrationIssue?.(issue, report);
+}
+
+function handleHydrationIssue(
+  report: FrontierDomHydrationReport,
+  issue: FrontierDomHydrationIssue,
+  policy: FrontierDomHydrationReconcilePolicy,
+  onHydrationIssue?: (issue: FrontierDomHydrationIssue, report: FrontierDomHydrationReport) => void
+): void {
+  if (policy === 'ignore') return;
+  addHydrationIssue(report, issue, onHydrationIssue);
+  if (policy === 'error') throw new TypeError(issue.message);
+  if (policy === 'warn') warnHydrationIssue(issue);
+}
+
+function warnHydrationIssue(issue: FrontierDomHydrationIssue): void {
+  const consoleLike = (globalThis as { console?: Pick<Console, 'warn'> }).console;
+  consoleLike?.warn?.(issue.message, issue);
+}
+
+function pushUnique(items: string[], value: string): void {
+  if (!items.includes(value)) items[items.length] = value;
+}
+
+function normalizeHeads(heads: readonly string[] | undefined): string[] | undefined {
+  if (heads === undefined) return undefined;
+  return heads.slice().sort();
+}
+
+function cloneStateVector(stateVector: Record<string, number> | undefined): Record<string, number> | undefined {
+  return stateVector ? { ...stateVector } : undefined;
+}
+
+function stringArrayEqual(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if (left[i] !== right[i]) return false;
+  }
+  return true;
+}
+
+function stateVectorEqual(left: Record<string, number> | undefined, right: Record<string, number> | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  if (!stringArrayEqual(leftKeys, rightKeys)) return false;
+  for (let i = 0; i < leftKeys.length; i++) {
+    const key = leftKeys[i];
+    if (left[key] !== right[key]) return false;
+  }
+  return true;
+}
+
+function jsonValueEqual(left: JsonValue | undefined, right: JsonValue | undefined): boolean {
+  if (Object.is(left, right)) return true;
+  if (left === null || right === null) return left === right;
+  if (typeof left !== 'object' || typeof right !== 'object') return false;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+    for (let i = 0; i < left.length; i++) {
+      if (!jsonValueEqual(left[i] as JsonValue, right[i] as JsonValue)) return false;
+    }
+    return true;
+  }
+  const leftRecord = left as Record<string, JsonValue>;
+  const rightRecord = right as Record<string, JsonValue>;
+  const leftKeys = Object.keys(leftRecord).sort();
+  const rightKeys = Object.keys(rightRecord).sort();
+  if (!stringArrayEqual(leftKeys, rightKeys)) return false;
+  for (let i = 0; i < leftKeys.length; i++) {
+    const key = leftKeys[i];
+    if (!jsonValueEqual(leftRecord[key], rightRecord[key])) return false;
+  }
+  return true;
+}
+
+function describeHydrationNode(node: Node): string {
+  if (isElementLike(node)) return '<' + node.localName + '>';
+  return 'nodeType:' + node.nodeType;
+}
+
+function describeHydrationTarget(target: FrontierDomNodeTarget): string {
+  if (target.anchor) return 'anchor:' + target.anchor;
+  if (target.selector) return 'selector:' + target.selector;
+  return 'unknown target';
+}
+
 function resolveFormatter(name: string | undefined, registry: FrontierDomManifestRegistry): FrontierDomValueFormatter | undefined {
   if (name === undefined || name === '' || name === 'text') return undefined;
   if (name === 'json') return (value) => value === undefined ? '' : JSON.stringify(value);
@@ -2117,6 +2714,7 @@ function writeCompiledHtml(target: ParentNode, html: string, replace: boolean): 
 function isCompiledView(value: unknown): value is FrontierDomCompiledView {
   return value !== null &&
     typeof value === 'object' &&
+    (value as FrontierDomSerializedState).kind !== 'frontier.dom.state' &&
     typeof (value as FrontierDomCompiledView).html === 'string' &&
     isRenderManifest((value as FrontierDomCompiledView).manifest);
 }

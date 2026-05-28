@@ -191,7 +191,7 @@ function renderConformanceHtml(assets) {
 <script type="importmap">${escapeScriptJson(importMap)}</script>
 <div id="root"></div>
 <script type="module">
-import { createDomRenderer, createDomRendererFromManifest, fromStateEngine, hydrateDomRenderer } from '@shapeshift-labs/frontier-dom';
+import { createApp, createDomRenderer, createDomRendererFromManifest, fromStateEngine, hydrateDomRenderer } from '@shapeshift-labs/frontier-dom';
 import { createStateEngine } from '@shapeshift-labs/frontier-state';
 import { Fragment, createJsxManifest, each, jsx, text } from '@shapeshift-labs/frontier-dom/jsx-runtime';
 
@@ -217,6 +217,7 @@ try {
   await runCase('delegated events', testDelegatedEvents);
   await runCase('forms selection ime', testFormsSelectionIme);
   await runCase('focus preservation', testFocusPreservation);
+  await runCase('hydration reconciliation', testHydrationReconciliation);
   window.__frontierDomBrowserConformanceResult = {
     status: 'ok',
     userAgent: navigator.userAgent,
@@ -460,6 +461,67 @@ function testFocusPreservation() {
   assert.strictEqual(document.activeElement, focusedInput, 'focused keyed input should remain active after reorder');
   assert.strictEqual(focusedInput.value, 'Beta moved');
   renderer.dispose();
+}
+
+function testHydrationReconciliation() {
+  const serverHtml = '<main data-frontier-id="panel"><span data-frontier-id="name">Server</span><ul data-frontier-id="rows"><li data-frontier-key="a">server</li></ul></main>';
+  const root = resetRoot('<main data-frontier-id="panel"><div data-frontier-id="rows"></div></main>');
+  const state = createStateEngine({
+    user: { name: 'Browser Client' },
+    rows: [
+      { id: 'a', text: 'Alpha' },
+      { id: 'b', text: 'Beta' }
+    ]
+  }, { diff: { arrayKey: 'id' } });
+  const source = {
+    ...fromStateEngine(state),
+    getBasis: () => 'client',
+    getHeads: () => ['h2'],
+    getStateVector: () => ({ actor: 2 })
+  };
+  const app = createApp({
+    source,
+    target: root,
+    templates: {
+      row: {
+        create(row) {
+          const item = document.createElement('li');
+          item.textContent = row.id + ':' + row.text;
+          return item;
+        },
+        update(node, row) {
+          node.textContent = row.id + ':' + row.text;
+        }
+      }
+    }
+  });
+  let report;
+  app.hydrate({
+    kind: 'frontier.dom.state',
+    version: 1,
+    html: serverHtml,
+    manifest: {
+      version: 1,
+      root: { anchor: 'panel' },
+      source: { basis: 'server', heads: ['h1'], stateVector: { actor: 1 } },
+      bindings: [
+        { id: 'b:name', kind: 'text', path: '/user/name', target: { anchor: 'name' } },
+        { id: 'b:rows', kind: 'each', path: '/rows/*', fields: ['text'], keyBy: 'id', container: { anchor: 'rows' }, template: 'row' }
+      ]
+    },
+    snapshot: { user: { name: 'Server' }, rows: [{ id: 'a', text: 'Server Alpha' }] }
+  }, {
+    onHydrationReport(nextReport) {
+      report = nextReport;
+    }
+  });
+  assert.strictEqual(root.querySelector('[data-frontier-id="name"]').textContent, 'Browser Client');
+  assert.strictEqual(root.querySelector('[data-frontier-id="rows"]').localName, 'ul');
+  assertTexts(root.querySelectorAll('[data-frontier-id="rows"] li'), ['a:Alpha', 'b:Beta']);
+  assert(report.issues.some((issue) => issue.kind === 'basis'), 'basis mismatch should be reported');
+  assert(report.issues.some((issue) => issue.kind === 'missing-anchor'), 'missing anchor should be reported');
+  assert(report.issues.some((issue) => issue.kind === 'stale-anchor'), 'stale anchor should be reported');
+  app.dispose();
 }
 
 function rowTemplate(tag, formatter) {
