@@ -449,6 +449,24 @@ import { createDomDevtoolsSink } from '@shapeshift-labs/frontier-dom/devtools';
 import { renderDomStateScript } from '@shapeshift-labs/frontier-dom/ssr';
 ```
 
+## Browser Conformance
+
+Run the package browser matrix with:
+
+```sh
+npm run test:browser
+```
+
+The matrix runs compiler HTML/manifest snapshots in Node, then exercises these fixtures in a real browser when Chrome is available:
+
+- keyed hydration
+- nested lists
+- fragments
+- SVG and MathML namespaces
+- delegated events
+- forms, selection, and IME composition
+- focus preservation during keyed row movement
+
 ## Benchmarks
 
 These are Frontier-only package measurements, not competitor comparisons.

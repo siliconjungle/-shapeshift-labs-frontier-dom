@@ -2171,6 +2171,7 @@ function placeEachNodes<TNode extends Node>(container: ParentNode, entries: Arra
     container.appendChild(fragment);
     return;
   }
+  const focused = captureFocusedElement(container);
   let anchor: Node | null = null;
   for (let i = entries.length - 1; i >= 0; i--) {
     const node = entries[i].node;
@@ -2179,6 +2180,7 @@ function placeEachNodes<TNode extends Node>(container: ParentNode, entries: Arra
     }
     anchor = node;
   }
+  restoreFocusedElement(focused);
 }
 
 function setNodeKeyAttribute(node: Node, keyAttribute: string, key: string): void {
@@ -2225,6 +2227,7 @@ function placeVirtualNodes<TNode extends Node>(
     container.appendChild(fragment);
     return;
   }
+  const focused = captureFocusedElement(container);
   if (spacers.enabled && spacers.before && spacers.after) {
     setSpacerSize(spacers.before, offsetBefore);
     setSpacerSize(spacers.after, offsetAfter);
@@ -2241,6 +2244,23 @@ function placeVirtualNodes<TNode extends Node>(
   }
   if (spacers.enabled && spacers.before && spacers.before.nextSibling !== anchor) {
     container.insertBefore(spacers.before, anchor);
+  }
+  restoreFocusedElement(focused);
+}
+
+function captureFocusedElement(container: ParentNode): HTMLElement | SVGElement | null {
+  const doc = (container as Node).ownerDocument ?? readGlobalDocument();
+  const active = doc.activeElement;
+  if (!active || !rootContains(container, active) || typeof (active as HTMLElement).focus !== 'function') return null;
+  return active as HTMLElement | SVGElement;
+}
+
+function restoreFocusedElement(element: HTMLElement | SVGElement | null): void {
+  if (!element || element.ownerDocument?.activeElement === element || !element.isConnected) return;
+  try {
+    element.focus({ preventScroll: true });
+  } catch {
+    element.focus();
   }
 }
 

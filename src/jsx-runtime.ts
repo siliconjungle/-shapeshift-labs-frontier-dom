@@ -36,6 +36,45 @@ const SVG_TAGS = new Set([
   'tspan',
   'use'
 ]);
+const MATHML_NAMESPACE = 'http://www.w3.org/1998/Math/MathML';
+const MATHML_TAGS = new Set([
+  'annotation',
+  'annotation-xml',
+  'maction',
+  'math',
+  'merror',
+  'mfrac',
+  'mi',
+  'mmultiscripts',
+  'mn',
+  'mo',
+  'mover',
+  'mpadded',
+  'mphantom',
+  'mprescripts',
+  'mroot',
+  'mrow',
+  'ms',
+  'mscarries',
+  'mscarry',
+  'msgroup',
+  'msline',
+  'mspace',
+  'msqrt',
+  'msrow',
+  'mstack',
+  'mstyle',
+  'msub',
+  'msubsup',
+  'msup',
+  'mtable',
+  'mtd',
+  'mtext',
+  'mtr',
+  'munder',
+  'munderover',
+  'semantics'
+]);
 
 export interface FrontierJsxManifestOptions {
   source?: FrontierDomManifestSource;
@@ -298,6 +337,8 @@ function createJsxNode(type: string | typeof Fragment | ((props: FrontierJsxProp
     ? doc.createDocumentFragment()
     : SVG_TAGS.has(type)
       ? doc.createElementNS(SVG_NAMESPACE, type)
+      : MATHML_TAGS.has(type)
+        ? doc.createElementNS(MATHML_NAMESPACE, type)
       : doc.createElement(type);
   applyProps(node, props);
   appendChildren(node, props.children);

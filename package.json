@@ -74,9 +74,10 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "test": "npm run build && npm run typecheck && node test/smoke.mjs && node test/fuzz.mjs --cases 300",
+    "test": "npm run build && npm run typecheck && node test/smoke.mjs && node test/browser-conformance.mjs --skip-browser-if-missing && node test/fuzz.mjs --cases 300",
     "prepack": "npm run readme:packages:check && npm run test",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p test/tsconfig.json --noEmit",
+    "test:browser": "npm run build && node test/browser-conformance.mjs",
     "fuzz": "npm run build && node test/fuzz.mjs",
     "bench": "npm run build && node --expose-gc benchmarks/package-bench.mjs --out benchmarks/results/frontier-dom-package-bench-latest.json",
     "pack:dry": "npm pack --dry-run",
