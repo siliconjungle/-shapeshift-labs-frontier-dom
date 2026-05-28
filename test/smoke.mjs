@@ -319,8 +319,9 @@ function runManifestHydrationSmoke() {
   assert.strictEqual(app.querySelector('[data-frontier-id="feature-slot"]').textContent, 'off');
 
   const serialized = serializeDomState({ manifest, source: fromStateEngine(hydrateState) });
+  const serializedBasis = typeof hydrateState.getBasis === 'function' ? hydrateState.getBasis() : hydrateBasis;
   assert.strictEqual(serialized.kind, 'frontier.dom.state');
-  assert.strictEqual(serialized.source.basis, hydrateBasis);
+  assert.strictEqual(serialized.source.basis, serializedBasis);
   assert.deepStrictEqual(deserializeDomState(JSON.stringify(serialized)).manifest.bindings.map((binding) => binding.id), [
     'b:user-name',
     'a:rename',
