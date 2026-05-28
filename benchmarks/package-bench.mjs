@@ -4,8 +4,9 @@ import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { createStateEngine } from '@shapeshift-labs/frontier-state';
-import { createDomRenderer, createDomRendererFromManifest, fromStateEngine, syncDomScheduler } from '../dist/index.js';
+import { createApp, createDomRenderer, createDomRendererFromManifest, fromStateEngine, syncDomScheduler } from '../dist/index.js';
 import { createPatchRenderer, fromStateEngine as fromStateEngineForPatchRenderer, syncPatchScheduler } from '../dist/core.js';
+import { each as jsxEach, fixedLayout as jsxFixedLayout, jsx, text as jsxText, virtualEach as jsxVirtualEach } from '../dist/jsx-runtime.js';
 import { createFixedLayout, createTextLayout, virtualize, virtualizeFrustum } from '@shapeshift-labs/frontier-virtual';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,7 +30,10 @@ const results = [
   measureVirtualizeFixedRows(rows),
   measureVirtualizeTextRows(Math.min(rows, 2000)),
   measureDomVirtualEachScroll(Math.min(rows, 2000)),
-  measureFrustumCull(rows)
+  measureFrustumCull(rows),
+  measureCreateAppRuntimeMount(Math.min(rows, 1000)),
+  await measureCompileFrontierJsx(),
+  await measureCreateAppCompiledMount(Math.min(rows, 1000))
 ];
 
 const report = {
@@ -355,6 +359,87 @@ function measureFrustumCull(rowCount) {
   return summarize('Virtualize 3D frustum boxes, ' + rowCount + ' boxes', samples, rounds);
 }
 
+function measureCreateAppRuntimeMount(rowCount) {
+  const samples = [];
+  const previousDocument = globalThis.document;
+  for (let round = 0; round < rounds; round++) {
+    const dom = new JSDOM('<!doctype html><div id="app"></div>');
+    globalThis.document = dom.window.document;
+    const target = dom.window.document.getElementById('app');
+    const state = createStateEngine({ title: 'Rows', rows: makeRows(rowCount) }, { diff: { arrayKey: 'id' } });
+    const app = createApp({
+      source: fromStateEngine(state),
+      target,
+      templates: createBenchTemplates(dom.window.document)
+    });
+    const view = jsx('main', {
+      frId: 'app-view',
+      children: [
+        jsxText('/title', { frId: 'title' }),
+        jsxEach('/rows/*', {
+          frId: 'rows',
+          as: 'ul',
+          fields: ['text', 'done'],
+          keyBy: 'id',
+          template: 'row'
+        }),
+        jsxVirtualEach('/rows/*', {
+          frId: 'virtual-rows',
+          keyBy: 'id',
+          template: 'row',
+          viewport: { offset: 0, size: 480 },
+          layout: jsxFixedLayout(24)
+        })
+      ]
+    });
+    const start = performance.now();
+    app.mount(view);
+    samples[samples.length] = (performance.now() - start) * 1000;
+    sink += target.querySelectorAll('li').length;
+    app.dispose();
+    dom.window.close();
+  }
+  restoreGlobalDocument(previousDocument);
+  return summarize('createApp runtime JSX mount, ' + rowCount + ' rows', samples, rowCount);
+}
+
+async function measureCompileFrontierJsx() {
+  const { compileFrontierJsx } = await import('../dist/compiler.js');
+  const source = createCompiledBenchSource();
+  await compileFrontierJsx(source, { entry: 'App' });
+  const samples = [];
+  for (let round = 0; round < rounds; round++) {
+    const start = performance.now();
+    const compiled = await compileFrontierJsx(source, { entry: 'App' });
+    samples[samples.length] = (performance.now() - start) * 1000;
+    sink += compiled.manifest.bindings.length;
+  }
+  return summarize('Compile TSX manifest with components', samples, rounds);
+}
+
+async function measureCreateAppCompiledMount(rowCount) {
+  const { compileFrontierJsx } = await import('../dist/compiler.js');
+  const compiled = await compileFrontierJsx(createCompiledBenchSource(), { entry: 'App' });
+  const samples = [];
+  for (let round = 0; round < rounds; round++) {
+    const dom = new JSDOM('<!doctype html><div id="app"></div>');
+    const target = dom.window.document.getElementById('app');
+    const state = createStateEngine({ title: 'Rows', rows: makeRows(rowCount) }, { diff: { arrayKey: 'id' } });
+    const app = createApp({
+      source: fromStateEngine(state),
+      target,
+      templates: createBenchTemplates(dom.window.document)
+    });
+    const start = performance.now();
+    app.mount(compiled);
+    samples[samples.length] = (performance.now() - start) * 1000;
+    sink += target.querySelectorAll('li').length;
+    app.dispose();
+    dom.window.close();
+  }
+  return summarize('createApp compiled TSX hydrate, ' + rowCount + ' rows', samples, rowCount);
+}
+
 function createTextFixture(rowCount, trace) {
   const dom = new JSDOM('<!doctype html><div></div>');
   const fragment = dom.window.document.createDocumentFragment();
@@ -389,6 +474,57 @@ function createEachFixture(rowCount) {
     }
   });
   return { document: dom.window.document, list, renderer, state };
+}
+
+function createBenchTemplates(document) {
+  return {
+    row: {
+      create(row) {
+        const item = document.createElement('li');
+        item.textContent = formatRow(row);
+        return item;
+      },
+      update(node, row) {
+        node.textContent = formatRow(row);
+      }
+    }
+  };
+}
+
+function createCompiledBenchSource() {
+  return `
+    function Title() {
+      return <h1 frId="title" $text="/title" />;
+    }
+    function Rows() {
+      return (
+        <ul
+          frId="rows"
+          $each={{ path: "/rows/*", fields: ["text", "done"], keyBy: "id", template: "row" }}
+        />
+      );
+    }
+    function App() {
+      return (
+        <main frId="app-view">
+          <Title />
+          <Rows />
+          {virtualEach("/rows/*", {
+            frId: "virtual-rows",
+            keyBy: "id",
+            template: "row",
+            viewport: { offset: 0, size: 480 },
+            layout: fixedLayout(24)
+          })}
+        </main>
+      );
+    }
+  `;
+}
+
+function restoreGlobalDocument(previousDocument) {
+  if (previousDocument === undefined) delete globalThis.document;
+  else globalThis.document = previousDocument;
 }
 
 function summarize(fixture, samples, domWrites) {

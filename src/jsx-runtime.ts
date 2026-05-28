@@ -40,6 +40,17 @@ export interface FrontierJsxTextBinding {
   frId?: string;
 }
 
+export interface FrontierJsxEachBinding {
+  readonly [FRONTIER_JSX_MARKER]: 'each';
+  path: WatchPath;
+  keyBy?: string | number;
+  fields?: WatchPath[];
+  template: string;
+  keyAttribute?: string;
+  as?: string;
+  frId?: string;
+}
+
 export interface FrontierJsxVirtualEachBinding {
   readonly [FRONTIER_JSX_MARKER]: 'virtualEach';
   path: WatchPath;
@@ -83,6 +94,17 @@ export function when(
   };
 }
 
+export function each(
+  path: WatchPath,
+  options: Omit<FrontierJsxEachBinding, typeof FRONTIER_JSX_MARKER | 'path'>
+): FrontierJsxEachBinding {
+  return {
+    [FRONTIER_JSX_MARKER]: 'each',
+    path,
+    ...options
+  };
+}
+
 export function virtualEach(
   path: WatchPath,
   options: Omit<FrontierJsxVirtualEachBinding, typeof FRONTIER_JSX_MARKER | 'path'>
@@ -96,6 +118,14 @@ export function virtualEach(
 
 export function textLayout(options: Omit<Extract<FrontierDomVirtualLayoutManifest, { kind: 'text' }>, 'kind'>): FrontierDomVirtualLayoutManifest {
   return { kind: 'text', ...options };
+}
+
+export function fixedLayout(itemSize: number): FrontierDomVirtualLayoutManifest {
+  return { kind: 'fixed', itemSize };
+}
+
+export function variableLayout(defaultSize: number): FrontierDomVirtualLayoutManifest {
+  return { kind: 'variable', defaultSize };
 }
 
 export function jsx(type: string | typeof Fragment | ((props: FrontierJsxProps) => Node), props: FrontierJsxProps = {}): Node {
@@ -324,6 +354,19 @@ function appendChildren(parent: Node, children: unknown): void {
     parent.appendChild(jsx(children.as ?? 'span', { frId: children.frId, $text: children.path }));
     return;
   }
+  if (isFrontierJsxEachBinding(children)) {
+    parent.appendChild(jsx(children.as ?? 'div', {
+      frId: children.frId,
+      $each: {
+        path: children.path,
+        fields: children.fields,
+        keyBy: children.keyBy,
+        keyAttribute: children.keyAttribute,
+        template: children.template
+      }
+    }));
+    return;
+  }
   if (isFrontierJsxVirtualEachBinding(children)) {
     parent.appendChild(jsx(children.as ?? 'div', {
       frId: children.frId,
@@ -360,6 +403,10 @@ function appendChildren(parent: Node, children: unknown): void {
 
 function isFrontierJsxTextBinding(value: unknown): value is FrontierJsxTextBinding {
   return value !== null && typeof value === 'object' && (value as FrontierJsxTextBinding)[FRONTIER_JSX_MARKER] === 'text';
+}
+
+function isFrontierJsxEachBinding(value: unknown): value is FrontierJsxEachBinding {
+  return value !== null && typeof value === 'object' && (value as FrontierJsxEachBinding)[FRONTIER_JSX_MARKER] === 'each';
 }
 
 function isFrontierJsxVirtualEachBinding(value: unknown): value is FrontierJsxVirtualEachBinding {
@@ -399,6 +446,10 @@ function isNode(value: unknown): value is Node {
 }
 
 export namespace JSX {
+  export type Element = Node;
+  export interface ElementChildrenAttribute {
+    children: unknown;
+  }
   export interface IntrinsicElements {
     [element: string]: FrontierJsxProps;
   }

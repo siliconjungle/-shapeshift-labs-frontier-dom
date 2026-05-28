@@ -22,6 +22,7 @@ type TypeScriptModule = typeof tsType;
 type TsNode = tsType.Node;
 type TsExpression = tsType.Expression;
 type TsJsxAttribute = tsType.JsxAttribute;
+type TsJsxRoot = tsType.JsxElement | tsType.JsxSelfClosingElement | tsType.JsxFragment;
 
 export type FrontierJsxCompileDiagnosticSeverity = 'error' | 'warning';
 
@@ -35,6 +36,7 @@ export interface FrontierJsxCompileDiagnostic {
 
 export interface FrontierJsxCompileOptions {
   fileName?: string;
+  entry?: string;
   root?: FrontierDomNodeTarget;
   source?: FrontierDomManifestSource;
 }
@@ -70,6 +72,12 @@ interface FrontierAttributeState {
   };
 }
 
+interface FrontierComponentDefinition {
+  name: string;
+  node: TsJsxRoot;
+  declaration: TsNode;
+}
+
 export async function compileFrontierJsx(
   sourceText: string,
   options: FrontierJsxCompileOptions = {}
@@ -95,6 +103,8 @@ async function loadTypeScript(): Promise<TypeScriptModule> {
 class FrontierJsxCompiler {
   private bindings: FrontierDomManifestBinding[] = [];
   private diagnostics: FrontierJsxCompileDiagnostic[] = [];
+  private components = new Map<string, FrontierComponentDefinition>();
+  private componentStack: string[] = [];
   private nextAutoId = 1;
 
   constructor(
@@ -104,6 +114,7 @@ class FrontierJsxCompiler {
   ) {}
 
   compile(): FrontierJsxCompileResult {
+    this.collectComponents();
     const root = this.findRootJsx();
     if (!root) {
       this.report('error', 'No JSX root expression was found', this.sourceFile, 'FRONTIER_JSX_NO_ROOT');
@@ -125,18 +136,115 @@ class FrontierJsxCompiler {
     };
   }
 
-  private findRootJsx(): TsNode | null {
-    let found: TsNode | null = null;
-    const visit = (node: TsNode): void => {
-      if (found) return;
-      if (this.ts.isJsxElement(node) || this.ts.isJsxSelfClosingElement(node) || this.ts.isJsxFragment(node)) {
-        found = node;
-        return;
+  private collectComponents(): void {
+    for (const statement of this.sourceFile.statements) {
+      if (this.ts.isFunctionDeclaration(statement) && statement.name && isComponentName(statement.name.text)) {
+        const node = statement.body ? this.findReturnJsx(statement.body) : null;
+        if (node) this.components.set(statement.name.text, { name: statement.name.text, node, declaration: statement });
+        continue;
       }
-      this.ts.forEachChild(node, visit);
-    };
-    visit(this.sourceFile);
-    return found;
+      if (!this.ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (!this.ts.isIdentifier(declaration.name) || !isComponentName(declaration.name.text)) continue;
+        const node = this.findInitializerComponentJsx(declaration.initializer);
+        if (node) this.components.set(declaration.name.text, { name: declaration.name.text, node, declaration });
+      }
+    }
+  }
+
+  private findRootJsx(): TsNode | null {
+    if (this.options.entry) {
+      const entry = this.findNamedEntry(this.options.entry);
+      if (entry) return entry;
+      this.report('error', 'Frontier JSX entry was not found: ' + this.options.entry, this.sourceFile, 'FRONTIER_JSX_ENTRY_NOT_FOUND');
+      return null;
+    }
+
+    for (const name of ['view', 'View', 'app', 'App']) {
+      const entry = this.findNamedEntry(name);
+      if (entry) return entry;
+    }
+
+    const defaultExport = this.findDefaultExportJsx();
+    if (defaultExport) return defaultExport;
+
+    const topLevel = this.findTopLevelJsx();
+    if (topLevel) return topLevel;
+
+    if (this.components.size === 1) return Array.from(this.components.values())[0].node;
+    return null;
+  }
+
+  private findNamedEntry(name: string): TsNode | null {
+    const component = this.components.get(name);
+    if (component) return component.node;
+    for (const statement of this.sourceFile.statements) {
+      if (!this.ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (!this.ts.isIdentifier(declaration.name) || declaration.name.text !== name) continue;
+        const entry = this.tryReadJsxFromExpression(declaration.initializer);
+        if (entry) return entry;
+      }
+    }
+    return null;
+  }
+
+  private findDefaultExportJsx(): TsNode | null {
+    for (const statement of this.sourceFile.statements) {
+      if (!this.ts.isExportAssignment(statement)) continue;
+      const entry = this.tryReadJsxFromExpression(statement.expression);
+      if (entry) return entry;
+      if (this.ts.isIdentifier(statement.expression)) {
+        const component = this.components.get(statement.expression.text);
+        if (component) return component.node;
+      }
+    }
+    return null;
+  }
+
+  private findTopLevelJsx(): TsNode | null {
+    for (const statement of this.sourceFile.statements) {
+      if (this.ts.isExpressionStatement(statement)) {
+        const entry = this.tryReadJsxFromExpression(statement.expression);
+        if (entry) return entry;
+      } else if (this.ts.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations) {
+          if (this.ts.isIdentifier(declaration.name) && isComponentName(declaration.name.text)) continue;
+          const entry = this.tryReadJsxFromExpression(declaration.initializer);
+          if (entry) return entry;
+        }
+      }
+    }
+    return null;
+  }
+
+  private findInitializerComponentJsx(initializer: TsExpression | undefined): TsJsxRoot | null {
+    if (!initializer) return null;
+    if (this.ts.isArrowFunction(initializer)) {
+      if (this.ts.isBlock(initializer.body)) return this.findReturnJsx(initializer.body);
+      return this.tryReadJsxFromExpression(initializer.body as TsExpression);
+    }
+    if (this.ts.isFunctionExpression(initializer)) {
+      return initializer.body ? this.findReturnJsx(initializer.body) : null;
+    }
+    return null;
+  }
+
+  private findReturnJsx(body: tsType.Block): TsJsxRoot | null {
+    for (const statement of body.statements) {
+      if (!this.ts.isReturnStatement(statement)) continue;
+      const entry = this.tryReadJsxFromExpression(statement.expression);
+      if (entry) return entry;
+    }
+    return null;
+  }
+
+  private tryReadJsxFromExpression(expression: TsExpression | undefined): TsJsxRoot | null {
+    let current = expression;
+    while (current && this.ts.isParenthesizedExpression(current)) current = current.expression;
+    if (!current) return null;
+    if (this.ts.isJsxElement(current) || this.ts.isJsxSelfClosingElement(current) || this.ts.isJsxFragment(current)) return current;
+    return null;
   }
 
   private compileNode(node: TsNode): string {
@@ -151,6 +259,8 @@ class FrontierJsxCompiler {
 
   private compileJsxElement(node: tsType.JsxElement): StaticElementCompileResult {
     const opening = node.openingElement;
+    const componentName = this.componentTagName(opening.tagName);
+    if (componentName) return this.compileComponentElement(componentName, opening.attributes.properties, node.children, node);
     const tag = this.tagNameToString(opening.tagName);
     const attributes = this.readAttributes(opening.attributes.properties);
     const childHtml = this.compileChildren(node.children);
@@ -158,9 +268,40 @@ class FrontierJsxCompiler {
   }
 
   private compileJsxSelfClosingElement(node: tsType.JsxSelfClosingElement): StaticElementCompileResult {
+    const componentName = this.componentTagName(node.tagName);
+    if (componentName) return this.compileComponentElement(componentName, node.attributes.properties, undefined, node);
     const tag = this.tagNameToString(node.tagName);
     const attributes = this.readAttributes(node.attributes.properties);
     return this.emitElement(tag, attributes, '', node);
+  }
+
+  private compileComponentElement(
+    name: string,
+    attributes: tsType.NodeArray<tsType.JsxAttributeLike>,
+    children: tsType.NodeArray<tsType.JsxChild> | undefined,
+    node: TsNode
+  ): StaticElementCompileResult {
+    const component = this.components.get(name);
+    if (!component) {
+      this.report('warning', 'JSX component is not statically known and was skipped: ' + name, node, 'FRONTIER_JSX_UNKNOWN_COMPONENT');
+      return { html: '', hasFrontierBindings: false };
+    }
+    if (this.componentStack.includes(name)) {
+      this.report('error', 'Recursive JSX component cannot be statically compiled: ' + name, node, 'FRONTIER_JSX_RECURSIVE_COMPONENT');
+      return { html: '', hasFrontierBindings: false };
+    }
+    if (attributes.length !== 0 || (children && children.length !== 0)) {
+      this.report(
+        'warning',
+        'Static Frontier JSX component compilation currently ignores component props and children: ' + name,
+        node,
+        'FRONTIER_JSX_COMPONENT_PROPS'
+      );
+    }
+    this.componentStack[this.componentStack.length] = name;
+    const html = this.compileNode(component.node);
+    this.componentStack.pop();
+    return { html, hasFrontierBindings: true };
   }
 
   private emitElement(
@@ -202,6 +343,7 @@ class FrontierJsxCompiler {
     const helperName = expression.expression.getText(this.sourceFile);
     if (helperName === 'text') return this.compileTextHelper(expression);
     if (helperName === 'when') return this.compileWhenHelper(expression);
+    if (helperName === 'each') return this.compileEachHelper(expression);
     if (helperName === 'virtualEach') return this.compileVirtualEachHelper(expression);
     return null;
   }
@@ -235,6 +377,20 @@ class FrontierJsxCompiler {
     const tag = typeof options.as === 'string' ? options.as : 'span';
     const anchor = typeof options.frId === 'string' ? options.frId : this.nextAnchor();
     const binding = this.createWhenBinding(anchor, { ...options, path }, expression);
+    if (binding) this.bindings[this.bindings.length] = binding;
+    return '<' + tag + ' data-frontier-id="' + escapeAttribute(anchor) + '"></' + tag + '>';
+  }
+
+  private compileEachHelper(expression: tsType.CallExpression): string {
+    const path = this.evaluateStaticExpression(expression.arguments[0]) as WatchPath | undefined;
+    const options = this.evaluateStaticExpression(expression.arguments[1]) as Record<string, unknown> | undefined;
+    if (!isWatchPath(path) || !options || typeof options !== 'object') {
+      this.report('error', 'each() requires a static path and options object', expression, 'FRONTIER_JSX_EACH_PATH');
+      return '';
+    }
+    const tag = typeof options.as === 'string' ? options.as : 'div';
+    const anchor = typeof options.frId === 'string' ? options.frId : this.nextAnchor();
+    const binding = this.createEachBinding(anchor, { ...options, path }, expression);
     if (binding) this.bindings[this.bindings.length] = binding;
     return '<' + tag + ' data-frontier-id="' + escapeAttribute(anchor) + '"></' + tag + '>';
   }
@@ -562,6 +718,14 @@ class FrontierJsxCompiler {
       const options = this.evaluateStaticExpression(expression.arguments[0]);
       if (options && typeof options === 'object') return { kind: 'text', ...(options as Record<string, unknown>) };
     }
+    if (this.ts.isCallExpression(expression) && expression.expression.getText(this.sourceFile) === 'fixedLayout') {
+      const itemSize = this.evaluateStaticExpression(expression.arguments[0]);
+      if (typeof itemSize === 'number') return { kind: 'fixed', itemSize };
+    }
+    if (this.ts.isCallExpression(expression) && expression.expression.getText(this.sourceFile) === 'variableLayout') {
+      const defaultSize = this.evaluateStaticExpression(expression.arguments[0]);
+      if (typeof defaultSize === 'number') return { kind: 'variable', defaultSize };
+    }
     return undefined;
   }
 
@@ -596,6 +760,11 @@ class FrontierJsxCompiler {
     return name.getText(this.sourceFile);
   }
 
+  private componentTagName(name: tsType.JsxTagNameExpression): string | null {
+    if (!this.ts.isIdentifier(name)) return null;
+    return isComponentName(name.text) ? name.text : null;
+  }
+
   private nextAnchor(): string {
     return 'fr-auto-' + this.nextAutoId++;
   }
@@ -619,6 +788,12 @@ class FrontierJsxCompiler {
 function isWatchPath(value: unknown): value is WatchPath {
   return typeof value === 'string' ||
     (Array.isArray(value) && value.every((segment) => typeof segment === 'string' || typeof segment === 'number'));
+}
+
+function isComponentName(value: string): boolean {
+  if (value.length === 0) return false;
+  const code = value.charCodeAt(0);
+  return code >= 65 && code <= 90;
 }
 
 function isVirtualLayout(value: unknown): value is FrontierDomVirtualLayoutManifest {

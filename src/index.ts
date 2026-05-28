@@ -5,6 +5,7 @@ import {
   OP_SET
 } from '@shapeshift-labs/frontier/constants';
 import { getCachedPointerPath, getPath } from '@shapeshift-labs/frontier/pointer';
+import { createJsxManifest } from './jsx-runtime.js';
 import {
   createFixedLayout,
   createTextLayout,
@@ -544,6 +545,47 @@ export interface FrontierDomSerializedState {
   layout?: FrontierVirtualSerializedLayoutState[];
 }
 
+export interface FrontierDomCompiledView {
+  html: string;
+  manifest: FrontierDomRenderManifestV1;
+}
+
+export type FrontierDomAppView =
+  | Node
+  | FrontierDomRenderManifestV1
+  | FrontierDomSerializedState
+  | FrontierDomCompiledView;
+
+export interface FrontierDomAppOptions extends Omit<FrontierDomRendererOptions, 'target'>, FrontierDomManifestRegistry {
+  target?: ParentNode | string | null;
+  replace?: boolean;
+  hydrateExisting?: boolean;
+  basisPolicy?: FrontierDomHydrationBasisPolicy;
+  onBasisMismatch?: (mismatch: FrontierDomHydrationBasisMismatch) => void;
+  manifestSource?: FrontierDomManifestSource;
+  root?: FrontierDomManifestRoot;
+}
+
+export interface FrontierDomAppMountOptions extends FrontierDomManifestRegistry {
+  replace?: boolean;
+  hydrateExisting?: boolean;
+  basisPolicy?: FrontierDomHydrationBasisPolicy;
+  onBasisMismatch?: (mismatch: FrontierDomHydrationBasisMismatch) => void;
+  manifestSource?: FrontierDomManifestSource;
+  root?: FrontierDomManifestRoot;
+}
+
+export interface FrontierDomApp {
+  readonly source: FrontierDomSource;
+  readonly target: ParentNode | null;
+  readonly renderer: FrontierDomRenderer | null;
+  mount(view: FrontierDomAppView, options?: FrontierDomAppMountOptions): FrontierDomRenderer;
+  hydrate(view: FrontierDomRenderManifestV1 | FrontierDomSerializedState | FrontierDomCompiledView, options?: FrontierDomAppMountOptions): FrontierDomRenderer;
+  serialize(options?: Omit<Parameters<typeof serializeDomState>[0], 'manifest' | 'source'>): FrontierDomSerializedState;
+  flush(): void;
+  dispose(): void;
+}
+
 type BindingRecord = {
   id: number;
   kind: FrontierDomBindingKind;
@@ -669,14 +711,21 @@ export function createDomRendererFromManifest(options: FrontierDomManifestRender
     formatters: options.formatters ?? {},
     layouts: options.layouts ?? {}
   };
+  const targetCache = new Map<string, Node>();
   reconcileHydrationBasis(manifest, renderer.source, options.basisPolicy ?? 'ignore', options.onBasisMismatch);
   for (let i = 0; i < manifest.bindings.length; i++) {
-    mountManifestBinding(renderer, root, manifest, manifest.bindings[i], registry, options.hydrateExisting !== false);
+    mountManifestBinding(renderer, root, manifest, manifest.bindings[i], registry, options.hydrateExisting !== false, targetCache);
   }
   return renderer;
 }
 
 export const hydrateDomRenderer = createDomRendererFromManifest;
+
+export function createApp(options: FrontierDomAppOptions): FrontierDomApp {
+  return new DomApp(options);
+}
+
+export const createFrontierApp = createApp;
 
 export function serializeDomState(input: {
   manifest: FrontierDomRenderManifestV1;
@@ -738,6 +787,116 @@ export function assertRenderManifestV1(manifest: FrontierDomRenderManifestV1): F
     if (typeof binding.kind !== 'string') throw new TypeError('frontier-dom binding kind is required');
   }
   return manifest;
+}
+
+class DomApp implements FrontierDomApp {
+  private rendererValue: FrontierDomRenderer | null = null;
+  private manifestValue: FrontierDomRenderManifestV1 | null = null;
+  private targetValue: ParentNode | null;
+
+  constructor(private readonly options: FrontierDomAppOptions) {
+    this.targetValue = resolveAppTarget(options.target ?? null);
+  }
+
+  get source(): FrontierDomSource {
+    return this.options.source;
+  }
+
+  get target(): ParentNode | null {
+    return this.targetValue;
+  }
+
+  get renderer(): FrontierDomRenderer | null {
+    return this.rendererValue;
+  }
+
+  mount(view: FrontierDomAppView, options: FrontierDomAppMountOptions = {}): FrontierDomRenderer {
+    this.rendererValue?.dispose();
+    const mountOptions = this.mergeMountOptions(options);
+    let manifest: FrontierDomRenderManifestV1;
+    let target = this.targetValue;
+
+    if (isCompiledView(view)) {
+      target = target ?? resolveAppTarget(this.options.target ?? null);
+      if (!target) throw new TypeError('frontier-dom app compiled views require a target');
+      writeCompiledHtml(target, view.html, mountOptions.replace);
+      manifest = view.manifest;
+    } else if (isSerializedDomState(view)) {
+      manifest = view.manifest;
+    } else if (isRenderManifest(view)) {
+      manifest = view;
+    } else {
+      if (!isParentNodeLike(view)) throw new TypeError('frontier-dom app mount() requires a JSX ParentNode, manifest, serialized state, or compiled view');
+      manifest = createJsxManifest(view, {
+        root: mountOptions.root,
+        source: mountOptions.manifestSource
+      });
+      target = attachRuntimeView(target, view, mountOptions.replace);
+    }
+
+    this.targetValue = target;
+    this.manifestValue = manifest;
+    this.rendererValue = createDomRendererFromManifest({
+      source: this.options.source,
+      target,
+      scheduler: this.options.scheduler,
+      trace: this.options.trace,
+      manifest,
+      templates: mountOptions.templates,
+      actions: mountOptions.actions,
+      actionRegistry: mountOptions.actionRegistry,
+      formatters: mountOptions.formatters,
+      layouts: mountOptions.layouts,
+      hydrateExisting: mountOptions.hydrateExisting,
+      basisPolicy: mountOptions.basisPolicy,
+      onBasisMismatch: mountOptions.onBasisMismatch
+    });
+    return this.rendererValue;
+  }
+
+  hydrate(
+    view: FrontierDomRenderManifestV1 | FrontierDomSerializedState | FrontierDomCompiledView,
+    options: FrontierDomAppMountOptions = {}
+  ): FrontierDomRenderer {
+    return this.mount(view, { ...options, replace: options.replace ?? false });
+  }
+
+  serialize(options: Omit<Parameters<typeof serializeDomState>[0], 'manifest' | 'source'> = {}): FrontierDomSerializedState {
+    if (!this.manifestValue) throw new TypeError('frontier-dom app has no mounted manifest to serialize');
+    return serializeDomState({
+      ...options,
+      manifest: this.manifestValue,
+      source: this.options.source
+    });
+  }
+
+  flush(): void {
+    this.rendererValue?.flush();
+  }
+
+  dispose(): void {
+    this.rendererValue?.dispose();
+    this.rendererValue = null;
+    this.manifestValue = null;
+  }
+
+  private mergeMountOptions(options: FrontierDomAppMountOptions): Required<Pick<FrontierDomAppMountOptions, 'replace' | 'hydrateExisting' | 'basisPolicy'>> &
+    FrontierDomManifestRegistry &
+    Pick<FrontierDomAppMountOptions, 'onBasisMismatch' | 'manifestSource' | 'root'> {
+    return {
+      replace: options.replace ?? this.options.replace ?? true,
+      hydrateExisting: options.hydrateExisting ?? this.options.hydrateExisting ?? true,
+      basisPolicy: options.basisPolicy ?? this.options.basisPolicy ?? 'ignore',
+      onBasisMismatch: options.onBasisMismatch ?? this.options.onBasisMismatch,
+      manifestSource: options.manifestSource ?? this.options.manifestSource,
+      root: options.root ?? this.options.root,
+      templates: { ...(this.options.templates ?? {}), ...(options.templates ?? {}) },
+      actions: { ...(this.options.actions ?? {}), ...(options.actions ?? {}) },
+      actionRegistry: options.actionRegistry ?? this.options.actionRegistry,
+      formatters: { ...(this.options.formatters ?? {}), ...(options.formatters ?? {}) },
+      layouts: { ...(this.options.layouts ?? {}), ...(options.layouts ?? {}) }
+    };
+  }
 }
 
 class DomRenderer implements FrontierDomRenderer {
@@ -1603,29 +1762,30 @@ function mountManifestBinding(
   manifest: FrontierDomRenderManifestV1,
   binding: FrontierDomManifestBinding,
   registry: FrontierDomManifestRegistry,
-  hydrateExisting: boolean
+  hydrateExisting: boolean,
+  targetCache: Map<string, Node>
 ): void {
   switch (binding.kind) {
     case 'text':
-      renderer.text(binding.path, resolveNodeTarget(root, binding.target) as Text | Element, {
+      renderer.text(binding.path, resolveNodeTarget(root, binding.target, targetCache) as Text | Element, {
         watch: binding.watch,
         format: resolveFormatter(binding.format, registry)
       });
       break;
     case 'attr':
-      renderer.attr(binding.path, resolveElementTarget(root, binding.target), binding.name, {
+      renderer.attr(binding.path, resolveElementTarget(root, binding.target, targetCache), binding.name, {
         watch: binding.watch,
         format: resolveFormatter(binding.format, registry)
       });
       break;
     case 'prop':
-      renderer.prop(binding.path, resolveElementTarget(root, binding.target), binding.name, { watch: binding.watch });
+      renderer.prop(binding.path, resolveElementTarget(root, binding.target, targetCache), binding.name, { watch: binding.watch });
       break;
     case 'class':
-      renderer.className(binding.path, resolveElementTarget(root, binding.target), binding.name, { watch: binding.watch });
+      renderer.className(binding.path, resolveElementTarget(root, binding.target, targetCache), binding.name, { watch: binding.watch });
       break;
     case 'style':
-      renderer.style(binding.path, resolveElementTarget(root, binding.target) as HTMLElement | SVGElement, binding.name, {
+      renderer.style(binding.path, resolveElementTarget(root, binding.target, targetCache) as HTMLElement | SVGElement, binding.name, {
         watch: binding.watch,
         priority: binding.priority,
         format: resolveFormatter(binding.format, registry)
@@ -1637,7 +1797,7 @@ function mountManifestBinding(
       if (!action && !actionRegistry) throw new TypeError('frontier-dom action is not registered: ' + binding.action);
       if (binding.delegate) {
         renderer.delegate(
-          resolveElementTarget(root, binding.target),
+          resolveElementTarget(root, binding.target, targetCache),
           binding.event,
           binding.delegate,
           (event, matched) => {
@@ -1652,7 +1812,7 @@ function mountManifestBinding(
         );
       } else {
         renderer.event(
-          resolveNodeTarget(root, binding.target),
+          resolveNodeTarget(root, binding.target, targetCache),
           binding.event,
           (event) => {
             if (action) action({ event, renderer, source: renderer.source, binding, manifest });
@@ -1668,7 +1828,7 @@ function mountManifestBinding(
       break;
     }
     case 'form':
-      renderer.formValue(binding.path, resolveElementTarget(root, binding.target), {
+      renderer.formValue(binding.path, resolveElementTarget(root, binding.target, targetCache), {
         watch: binding.watch,
         prop: binding.prop,
         event: binding.event,
@@ -1683,7 +1843,7 @@ function mountManifestBinding(
         throw new TypeError('frontier-dom fallback template is not registered: ' + binding.fallbackTemplate);
       }
       renderer.when(binding.path, {
-        container: resolveElementTarget(root, binding.target),
+        container: resolveElementTarget(root, binding.target, targetCache),
         watch: binding.watch,
         create(value, context) {
           return template.create(value, toTemplateWhenContext(context));
@@ -1714,7 +1874,7 @@ function mountManifestBinding(
       const template = registry.templates?.[binding.template];
       if (!template) throw new TypeError('frontier-dom template is not registered: ' + binding.template);
       renderer.each(binding.path, {
-        container: resolveElementTarget(root, binding.container),
+        container: resolveElementTarget(root, binding.container, targetCache),
         keyBy: binding.keyBy ?? 'id',
         keyAttribute: binding.keyAttribute,
         fields: binding.fields,
@@ -1733,7 +1893,7 @@ function mountManifestBinding(
       const template = registry.templates?.[binding.template];
       if (!template) throw new TypeError('frontier-dom template is not registered: ' + binding.template);
       renderer.virtualEach(binding.path, {
-        container: resolveElementTarget(root, binding.container),
+        container: resolveElementTarget(root, binding.container, targetCache),
         keyBy: binding.keyBy ?? 'id',
         keyAttribute: binding.keyAttribute,
         fields: binding.fields,
@@ -1763,23 +1923,38 @@ function resolveManifestRoot(manifest: FrontierDomRenderManifestV1, target: Pare
   return resolveNodeTarget(root, manifest.root) as ParentNode;
 }
 
-function resolveElementTarget(root: ParentNode, target: FrontierDomNodeTarget): Element {
-  const node = resolveNodeTarget(root, target);
+function resolveElementTarget(root: ParentNode, target: FrontierDomNodeTarget, cache?: Map<string, Node>): Element {
+  const node = resolveNodeTarget(root, target, cache);
   if (!isElementLike(node)) throw new TypeError('frontier-dom manifest target is not an element');
   return node;
 }
 
-function resolveNodeTarget(root: ParentNode, target: FrontierDomNodeTarget | undefined): Node {
+function resolveNodeTarget(root: ParentNode, target: FrontierDomNodeTarget | undefined, cache?: Map<string, Node>): Node {
   if (!target || (!target.anchor && !target.selector)) throw new TypeError('frontier-dom manifest target is required');
+  const cacheKey = cache && targetCacheKey(target);
+  if (cache && cacheKey) {
+    const cached = cache.get(cacheKey);
+    if (cached) return cached;
+  }
   if (target.selector) {
     const selected = queryRoot(root, target.selector);
-    if (selected) return selected;
+    if (selected) {
+      if (cache && cacheKey) cache.set(cacheKey, selected);
+      return selected;
+    }
   }
   if (target.anchor) {
     const selected = queryRoot(root, '[data-frontier-id="' + escapeCssAttribute(target.anchor) + '"]');
-    if (selected) return selected;
+    if (selected) {
+      if (cache && cacheKey) cache.set(cacheKey, selected);
+      return selected;
+    }
   }
   throw new TypeError('frontier-dom manifest target was not found');
+}
+
+function targetCacheKey(target: FrontierDomNodeTarget): string {
+  return (target.selector ? 's:' + target.selector : '') + '\n' + (target.anchor ? 'a:' + target.anchor : '');
 }
 
 function queryRoot(root: ParentNode, selector: string): Element | null {
@@ -1913,6 +2088,60 @@ function readGlobalDocument(): Document {
   return doc;
 }
 
+function resolveAppTarget(target: ParentNode | string | null): ParentNode | null {
+  if (typeof target !== 'string') return target;
+  const selected = readGlobalDocument().querySelector(target);
+  if (!selected) throw new TypeError('frontier-dom app target was not found: ' + target);
+  return selected;
+}
+
+function attachRuntimeView(target: ParentNode | null, view: ParentNode, replace: boolean): ParentNode {
+  if (!target) return view;
+  if (target === view) return target;
+  if (replace && typeof target.replaceChildren === 'function') {
+    target.replaceChildren(view);
+  } else if (view.parentNode !== target) {
+    target.appendChild(view);
+  }
+  return target;
+}
+
+function writeCompiledHtml(target: ParentNode, html: string, replace: boolean): void {
+  const doc = (target as Node).ownerDocument ?? readGlobalDocument();
+  const template = doc.createElement('template');
+  template.innerHTML = html;
+  if (replace && typeof target.replaceChildren === 'function') target.replaceChildren(template.content);
+  else target.appendChild(template.content);
+}
+
+function isCompiledView(value: unknown): value is FrontierDomCompiledView {
+  return value !== null &&
+    typeof value === 'object' &&
+    typeof (value as FrontierDomCompiledView).html === 'string' &&
+    isRenderManifest((value as FrontierDomCompiledView).manifest);
+}
+
+function isSerializedDomState(value: unknown): value is FrontierDomSerializedState {
+  return value !== null &&
+    typeof value === 'object' &&
+    (value as FrontierDomSerializedState).kind === 'frontier.dom.state' &&
+    isRenderManifest((value as FrontierDomSerializedState).manifest);
+}
+
+function isRenderManifest(value: unknown): value is FrontierDomRenderManifestV1 {
+  return value !== null &&
+    typeof value === 'object' &&
+    (value as FrontierDomRenderManifestV1).version === 1 &&
+    Array.isArray((value as FrontierDomRenderManifestV1).bindings);
+}
+
+function isParentNodeLike(value: unknown): value is ParentNode {
+  return value !== null &&
+    typeof value === 'object' &&
+    typeof (value as ParentNode).querySelectorAll === 'function' &&
+    typeof (value as Node).nodeType === 'number';
+}
+
 function isElementLike(value: unknown): value is Element {
   return value !== null && typeof value === 'object' && (value as Node).nodeType === 1;
 }
@@ -1935,6 +2164,13 @@ function hydrateEachEntries<TNode extends Node>(
 }
 
 function placeEachNodes<TNode extends Node>(container: ParentNode, entries: Array<EachEntry<TNode>>): void {
+  if (entries.length !== 0 && container.firstChild === null) {
+    const doc = entries[0].node.ownerDocument ?? readGlobalDocument();
+    const fragment = doc.createDocumentFragment();
+    for (let i = 0; i < entries.length; i++) fragment.appendChild(entries[i].node);
+    container.appendChild(fragment);
+    return;
+  }
   let anchor: Node | null = null;
   for (let i = entries.length - 1; i >= 0; i--) {
     const node = entries[i].node;
@@ -1976,6 +2212,19 @@ function placeVirtualNodes<TNode extends Node>(
   offsetBefore: number,
   offsetAfter: number
 ): void {
+  if (container.firstChild === null) {
+    const doc = entries[0]?.node.ownerDocument ?? spacers.before?.ownerDocument ?? spacers.after?.ownerDocument ?? readGlobalDocument();
+    const fragment = doc.createDocumentFragment();
+    if (spacers.enabled && spacers.before && spacers.after) {
+      setSpacerSize(spacers.before, offsetBefore);
+      setSpacerSize(spacers.after, offsetAfter);
+      fragment.appendChild(spacers.before);
+    }
+    for (let i = 0; i < entries.length; i++) fragment.appendChild(entries[i].node);
+    if (spacers.enabled && spacers.after) fragment.appendChild(spacers.after);
+    container.appendChild(fragment);
+    return;
+  }
   if (spacers.enabled && spacers.before && spacers.after) {
     setSpacerSize(spacers.before, offsetBefore);
     setSpacerSize(spacers.after, offsetAfter);

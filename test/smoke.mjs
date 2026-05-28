@@ -4,6 +4,7 @@ import { OP_ARRAY_OBJECT_FIELD_ASSIGN } from '@shapeshift-labs/frontier/constant
 import { createStateEngine } from '@shapeshift-labs/frontier-state';
 import { createLogger } from '@shapeshift-labs/frontier-logging';
 import {
+  createApp,
   createDomSchedulerFromRuntime,
   createDomRenderer,
   createDomRendererFromManifest,
@@ -18,7 +19,16 @@ import { compileFrontierJsx } from '../dist/compiler.js';
 import { createDomDevtoolsSink, inspectDomRenderer } from '../dist/devtools.js';
 import { createRenderLogSink } from '../dist/logging.js';
 import { parseDomHydrationScript, renderDomHydrationScript, streamDomHydrationScript } from '../dist/ssr.js';
-import { createJsxManifest, jsx, text as jsxText, textLayout as jsxTextLayout, virtualEach as jsxVirtualEach, when as jsxWhen } from '../dist/jsx-runtime.js';
+import {
+  createJsxManifest,
+  each as jsxEach,
+  fixedLayout as jsxFixedLayout,
+  jsx,
+  text as jsxText,
+  textLayout as jsxTextLayout,
+  virtualEach as jsxVirtualEach,
+  when as jsxWhen
+} from '../dist/jsx-runtime.js';
 import {
   createFixedLayout,
   createVariableLayout,
@@ -184,6 +194,7 @@ assert.strictEqual(effectCleanups, 4);
 runManifestHydrationSmoke();
 runJsxManifestSmoke();
 await runCompilerSmoke();
+await runAppApiSmoke();
 runVirtualDomSmoke();
 await runVirtualPrimitivesSmoke();
 runDelegatedFormSmoke();
@@ -424,6 +435,28 @@ function runJsxManifestSmoke() {
 
 async function runCompilerSmoke() {
   const compiled = await compileFrontierJsx(`
+    function UserName() {
+      return <span frId="component-name" $text="/user/name" />;
+    }
+
+    function App() {
+      return (
+        <main frId="panel">
+          <UserName />
+          {each("/todos/*", { frId: "helper-todos", as: "ul", fields: ["text"], keyBy: "id", template: "todo-row.v1" })}
+          {virtualEach("/todos/*", {
+            frId: "fixed-virtual-todos",
+            fields: ["text"],
+            keyBy: "id",
+            template: "todo-row.v1",
+            viewport: { offset: 0, size: 48 },
+            layout: fixedLayout(12),
+            overscan: 1
+          })}
+        </main>
+      );
+    }
+
     const view = (
       <main frId="panel">
         <span frId="name" $text="/user/name" />
@@ -447,7 +480,7 @@ async function runCompilerSmoke() {
         })}
       </main>
     );
-  `, { source: { kind: 'state', basis: 1 } });
+  `, { entry: 'view', source: { kind: 'state', basis: 1 } });
   assert.deepStrictEqual(compiled.diagnostics, []);
   assert.ok(compiled.html.includes('data-frontier-id="panel"'));
   assert.ok(compiled.html.includes('data-frontier-id="virtual-todos"'));
@@ -457,6 +490,137 @@ async function runCompilerSmoke() {
   );
   assert.strictEqual(compiled.manifest.source.basis, 1);
   assert.strictEqual(compiled.manifest.bindings.at(-1).layout.kind, 'text');
+
+  const appCompiled = await compileFrontierJsx(`
+    function Name() {
+      return <span frId="name" $text="/user/name" />;
+    }
+    const RowList = () => (
+      <ul
+        frId="todos"
+        $each={{ path: "/todos/*", fields: ["text"], keyBy: "id", template: "todo-row.v1" }}
+      />
+    );
+    function App() {
+      return (
+        <section frId="app">
+          <Name />
+          <RowList />
+          {virtualEach("/todos/*", {
+            frId: "virtual",
+            template: "todo-row.v1",
+            keyBy: "id",
+            viewport: { offset: 0, size: 24 },
+            layout: fixedLayout(12)
+          })}
+        </section>
+      );
+    }
+  `, { entry: 'App' });
+  assert.deepStrictEqual(appCompiled.diagnostics, []);
+  assert.ok(appCompiled.html.includes('data-frontier-id="name"'));
+  assert.ok(appCompiled.html.includes('data-frontier-id="todos"'));
+  assert.deepStrictEqual(appCompiled.manifest.bindings.map((binding) => binding.kind), ['text', 'each', 'virtualEach']);
+  assert.strictEqual(appCompiled.manifest.bindings.at(-1).layout.kind, 'fixed');
+}
+
+async function runAppApiSmoke() {
+  const dom = new JSDOM('<!doctype html><div id="app"></div>');
+  const previousDocument = globalThis.document;
+  globalThis.document = dom.window.document;
+  try {
+    const root = dom.window.document.getElementById('app');
+    const state = createStateEngine(
+      {
+        title: 'Runtime JSX',
+        user: { name: 'Compiled JSX' },
+        todos: [
+          { id: 'a', text: 'Alpha' },
+          { id: 'b', text: 'Beta' }
+        ]
+      },
+      { diff: { arrayKey: 'id' } }
+    );
+    const templates = {
+      'todo-row.v1': {
+        create(row) {
+          const item = dom.window.document.createElement('li');
+          item.textContent = row.text;
+          return item;
+        },
+        update(node, row) {
+          node.textContent = row.text;
+        }
+      }
+    };
+
+    function RuntimeView() {
+      return jsx('main', {
+        frId: 'runtime-view',
+        children: [
+          jsx('h1', { frId: 'runtime-title', $text: '/title' }),
+          jsxEach('/todos/*', {
+            frId: 'runtime-todos',
+            as: 'ul',
+            fields: ['text'],
+            keyBy: 'id',
+            template: 'todo-row.v1'
+          }),
+          jsxVirtualEach('/todos/*', {
+            frId: 'runtime-virtual',
+            keyBy: 'id',
+            template: 'todo-row.v1',
+            viewport: { offset: 0, size: 24 },
+            layout: jsxFixedLayout(12)
+          })
+        ]
+      });
+    }
+
+    const runtimeApp = createApp({ source: fromStateEngine(state), target: root, templates });
+    const runtimeRenderer = runtimeApp.mount(jsx(RuntimeView, {}));
+    assert.strictEqual(root.querySelector('[data-frontier-id="runtime-title"]').textContent, 'Runtime JSX');
+    assert.deepStrictEqual(Array.from(root.querySelectorAll('[data-frontier-id="runtime-todos"] li'), (item) => item.textContent), ['Alpha', 'Beta']);
+    state.commitPatch([[0, ['title'], 'Runtime Updated']]);
+    runtimeApp.flush();
+    assert.strictEqual(root.querySelector('[data-frontier-id="runtime-title"]').textContent, 'Runtime Updated');
+    const runtimeSnapshot = runtimeApp.serialize();
+    assert.strictEqual(runtimeSnapshot.kind, 'frontier.dom.state');
+    assert.ok(runtimeSnapshot.manifest.bindings.some((binding) => binding.kind === 'virtualEach'));
+    assert.strictEqual(runtimeApp.renderer, runtimeRenderer);
+    runtimeApp.dispose();
+
+    const compiled = await compileFrontierJsx(`
+      function Name() {
+        return <span frId="compiled-name" $text="/user/name" />;
+      }
+      function App() {
+        return (
+          <section frId="compiled-view">
+            <Name />
+            {each("/todos/*", {
+              frId: "compiled-todos",
+              as: "ul",
+              fields: ["text"],
+              keyBy: "id",
+              template: "todo-row.v1"
+            })}
+          </section>
+        );
+      }
+    `, { entry: 'App' });
+    const compiledApp = createApp({ source: fromStateEngine(state), target: root, templates });
+    compiledApp.mount(compiled);
+    assert.strictEqual(root.querySelector('[data-frontier-id="compiled-name"]').textContent, 'Compiled JSX');
+    state.commitPatch([[0, ['user', 'name'], 'Compiled Updated']]);
+    compiledApp.flush();
+    assert.strictEqual(root.querySelector('[data-frontier-id="compiled-name"]').textContent, 'Compiled Updated');
+    compiledApp.dispose();
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+    dom.window.close();
+  }
 }
 
 function runVirtualDomSmoke() {

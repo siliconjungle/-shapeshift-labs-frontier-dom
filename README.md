@@ -73,6 +73,82 @@ npm install @shapeshift-labs/frontier-dom @shapeshift-labs/frontier-state
 
 ## Current Surface
 
+The main product-facing API is JSX-first:
+
+```json
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "@shapeshift-labs/frontier-dom"
+  }
+}
+```
+
+```tsx
+import { createApp, fromStateEngine } from '@shapeshift-labs/frontier-dom';
+import { each, fixedLayout, text, virtualEach, when } from '@shapeshift-labs/frontier-dom/jsx-runtime';
+
+const app = createApp({
+  source: fromStateEngine(state),
+  target: '#app',
+  templates: {
+    'todo-row.v1': {
+      create(todo) {
+        const item = document.createElement('li');
+        item.textContent = String(todo?.text ?? '');
+        return item;
+      },
+      update(item, todo) {
+        item.textContent = String(todo?.text ?? '');
+      }
+    },
+    'signed-in.v1': { create: renderSignedInPanel },
+    'signed-out.v1': { create: renderSignedOutPanel },
+    'message-row.v1': { create: renderMessage }
+  }
+});
+
+app.mount(
+  <main frId="app">
+    {text('/user/name', { frId: 'user-name' })}
+    {when('/session/userId', {
+      frId: 'session-slot',
+      template: 'signed-in.v1',
+      fallbackTemplate: 'signed-out.v1'
+    })}
+    {each('/todos/*', {
+      frId: 'todos',
+      as: 'ul',
+      keyBy: 'id',
+      fields: ['text', 'done'],
+      template: 'todo-row.v1'
+    })}
+    {virtualEach('/messages/*', {
+      frId: 'messages',
+      keyBy: 'id',
+      template: 'message-row.v1',
+      viewport: { offset: 0, size: 640 },
+      layout: fixedLayout(28),
+      overscan: 8
+    })}
+  </main>
+);
+```
+
+Production builds should prefer the compiler path. The optional `./compiler` subpath lowers a static TSX entry to HTML plus a serializable manifest, and `createApp().mount(compiled)` hydrates it:
+
+```ts
+import { createApp, fromStateEngine } from '@shapeshift-labs/frontier-dom';
+import { compileFrontierJsx } from '@shapeshift-labs/frontier-dom/compiler';
+
+const compiled = await compileFrontierJsx(sourceText, { entry: 'App' });
+const app = createApp({ source: fromStateEngine(state), target: '#app', templates });
+
+app.mount(compiled);
+```
+
+The lower-level binding API remains available for explicit host control:
+
 ```ts
 import { createDomRenderer, fromStateEngine } from '@shapeshift-labs/frontier-dom';
 
@@ -203,8 +279,9 @@ JSX helpers are available from `./jsx-runtime`; they create real DOM nodes with 
 import { compileFrontierJsx } from '@shapeshift-labs/frontier-dom/compiler';
 
 const compiled = await compileFrontierJsx(`
-  const view = (
-    <main frId="app">
+  function App() {
+    return (
+      <main frId="app">
       <span frId="name" $text="/user/name" />
       {virtualEach("/messages/*", {
         frId: "messages",
@@ -214,9 +291,10 @@ const compiled = await compileFrontierJsx(`
         layout: textLayout({ field: "body", font: "14px Inter", lineHeight: 20, width: 420 }),
         overscan: 8
       })}
-    </main>
-  );
-`);
+      </main>
+    );
+  }
+`, { entry: 'App' });
 
 compiled.html;
 compiled.manifest;
@@ -268,14 +346,20 @@ renderer.virtualEach('/messages/*', {
 });
 ```
 
-JSX helpers now lower to the same manifest shape:
+JSX helpers lower to the same manifest shape at runtime and in the compiler:
 
 ```tsx
-import { text, textLayout, virtualEach, when } from '@shapeshift-labs/frontier-dom/jsx-runtime';
+import { each, fixedLayout, text, virtualEach, when } from '@shapeshift-labs/frontier-dom/jsx-runtime';
 
 const view = (
   <main>
     {text('/user/name', { frId: 'user-name' })}
+    {each('/todos/*', {
+      frId: 'todos',
+      as: 'ul',
+      keyBy: 'id',
+      template: 'todo-row.v1'
+    })}
     {when('/session/userId', {
       frId: 'session-slot',
       template: 'signed-in.v1',
@@ -286,7 +370,7 @@ const view = (
       keyBy: 'id',
       template: 'message-row.v1',
       viewport: { offset: 0, size: 640 },
-      layout: textLayout({ field: 'body', font: '14px Inter', lineHeight: 20, width: 420 }),
+      layout: fixedLayout(28),
       overscan: 8
     })}
   </main>

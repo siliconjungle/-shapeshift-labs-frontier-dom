@@ -5,10 +5,13 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "noEmit": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "@shapeshift-labs/frontier-dom",
     "skipLibCheck": true,
     "ignoreDeprecations": "6.0"
   },
   "include": [
-    "types.ts"
+    "types.ts",
+    "tsx.tsx"
   ]
 }

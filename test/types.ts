@@ -1,5 +1,6 @@
 import { createStateEngine, type JsonValue, type Patch } from '@shapeshift-labs/frontier-state';
 import {
+  createApp,
   createDomSchedulerFromRuntime,
   createDomRenderer,
   createDomRendererFromManifest,
@@ -7,6 +8,7 @@ import {
   fromStateEngine,
   readPatchAssignedValue,
   serializeDomState,
+  type FrontierDomApp,
   type FrontierDomBinding,
   type FrontierDomRenderManifestV1,
   type FrontierDomRenderer,
@@ -23,7 +25,7 @@ import { compileFrontierJsx, type FrontierJsxCompileResult } from '../dist/compi
 import { createDomDevtoolsSink, inspectDomRenderer } from '../dist/devtools.js';
 import { createRenderLogSink } from '../dist/logging.js';
 import { createHydrationBasisEnvelope, renderDomStateScript, streamDomHydrationScript } from '../dist/ssr.js';
-import { createJsxManifest, jsx, text, textLayout, virtualEach, when } from '../dist/jsx-runtime.js';
+import { createJsxManifest, each, fixedLayout as jsxFixedLayout, jsx, text, virtualEach, when } from '../dist/jsx-runtime.js';
 import type { FrontierLogger } from '@shapeshift-labs/frontier-logging';
 import {
   createFixedLayout,
@@ -209,6 +211,13 @@ target.appendChild(jsxNode);
 target.appendChild(jsx('div', {
   children: [
     text('/user/name', { frId: 'name-from-helper' }),
+    each('/todos/*', {
+      frId: 'todos-from-helper',
+      as: 'ul',
+      keyBy: 'id',
+      template: 'todo',
+      fields: ['text']
+    }),
     when('/todos/0/done', {
       frId: 'when-from-helper',
       template: 'visible',
@@ -218,15 +227,27 @@ target.appendChild(jsx('div', {
       frId: 'virtual-from-helper',
       keyBy: 'id',
       template: 'todo',
-      layout: textLayout({ field: 'text', font: '14px Inter', lineHeight: 20, width: 240 }),
+      layout: jsxFixedLayout(20),
       viewport: { offset: 0, size: 80 }
     })
   ]
 }));
 const jsxManifest = createJsxManifest(target);
 const compiled: Promise<FrontierJsxCompileResult> = compileFrontierJsx(`
-  const view = <main frId="app"><span $text="/user/name" /></main>;
+  function Name() { return <span frId="name" $text="/user/name" />; }
+  function App() { return <main frId="app"><Name />{each("/todos/*", { frId: "rows", template: "todo" })}</main>; }
 `, { source: { kind: 'state' } });
+
+const appRoot = document.createElement('main');
+const app: FrontierDomApp = createApp({ source, target: appRoot, templates: manifestRendererTemplates() });
+const appRenderer = app.mount(jsx('section', {
+  frId: 'typed-app',
+  children: [
+    text('/user/name', { frId: 'typed-app-name' }),
+    each('/todos/*', { frId: 'typed-app-todos', as: 'ul', template: 'todo', keyBy: 'id' })
+  ]
+}));
+const appSnapshot = app.serialize();
 
 const range = virtualize({
   items: (initial as { todos: JsonValue }).todos,
@@ -303,6 +324,8 @@ void manifestRenderer;
 void serialized;
 void jsxManifest;
 void compiled;
+void appRenderer;
+void appSnapshot;
 void patchBinding;
 void scheduledRenderer;
 void scheduledPatchRenderer;
@@ -317,3 +340,23 @@ void inspected;
 void basis;
 void script;
 void chunks;
+
+function manifestRendererTemplates() {
+  return {
+    todo: {
+      create() {
+        return document.createElement('li');
+      }
+    },
+    visible: {
+      create() {
+        return document.createElement('strong');
+      }
+    },
+    hidden: {
+      create() {
+        return document.createElement('em');
+      }
+    }
+  };
+}
