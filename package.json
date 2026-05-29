@@ -92,7 +92,7 @@
     "subscriptions"
   ],
   "dependencies": {
-    "@shapeshift-labs/frontier": "0.1.8",
+    "@shapeshift-labs/frontier": "0.1.9",
     "@shapeshift-labs/frontier-state": "0.1.1",
     "@shapeshift-labs/frontier-virtual": "0.1.0"
   },
