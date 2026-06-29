@@ -25,7 +25,10 @@ The published Frontier package family is generated from one shared package catal
 - [`@shapeshift-labs/frontier-schema`](https://www.npmjs.com/package/@shapeshift-labs/frontier-schema): JSON Schema validation, Frontier profile generation, CloudEvent envelopes, and query/table schema helpers.
 - [`@shapeshift-labs/frontier-migrations`](https://www.npmjs.com/package/@shapeshift-labs/frontier-migrations): Boundary-first data migrations, import normalization, plugin/API version mapping, versioned envelopes, graph diagnostics, patch path rewrites, dry-run reports, and current-shape rehydration.
 - [`@shapeshift-labs/frontier-event-log`](https://www.npmjs.com/package/@shapeshift-labs/frontier-event-log): Bounded event logs, replay cursors, consumer acknowledgements, keyed compaction, checkpoints, and Frontier patch event records.
+- [`@shapeshift-labs/frontier-run`](https://www.npmjs.com/package/@shapeshift-labs/frontier-run): Append-only distributed run graphs, causal event DAGs, evidence nodes, lanes, leases, refs, segments, dashboard projections, and admission decision records for Frontier agent work.
+- [`@shapeshift-labs/frontier-lease`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lease): Runtime-neutral semantic, file, package, and repository lease claims with fencing tokens, expiry, conflict checks, apply validation, and replayable evidence for Frontier collaboration.
 - [`@shapeshift-labs/frontier-inspect`](https://www.npmjs.com/package/@shapeshift-labs/frontier-inspect): Cross-package inspection/evidence bundles, registry graph snapshots, feature/resource impact reports, timeline/event normalization, redaction, JSONL import/export, and AI-readable app feature maps.
+- [`@shapeshift-labs/frontier-runtime-proof`](https://www.npmjs.com/package/@shapeshift-labs/frontier-runtime-proof): Runtime-neutral proof capsules, source-bound runtime telemetry, and admission evidence helpers for Frontier merge and review workflows.
 - [`@shapeshift-labs/frontier-scheduler`](https://www.npmjs.com/package/@shapeshift-labs/frontier-scheduler): Deterministic work scheduling, lanes, cancellation, backpressure, frame policies, replay snapshots, and work graphs.
 - [`@shapeshift-labs/frontier-logging`](https://www.npmjs.com/package/@shapeshift-labs/frontier-logging): Opt-in structured logging, browser telemetry, scheduled sinks, file sinks, exporters, benchmark traces, and Frontier patch/update summaries.
 - [`@shapeshift-labs/frontier-mutation`](https://www.npmjs.com/package/@shapeshift-labs/frontier-mutation): Explicit mutation and selector plans compiled to Frontier patches or CRDT operations.
@@ -40,16 +43,20 @@ The published Frontier package family is generated from one shared package catal
 - [`@shapeshift-labs/frontier-worker`](https://www.npmjs.com/package/@shapeshift-labs/frontier-worker): Serializable worker and edge task descriptors for Frontier apps, including queues, idempotency keys, retry and timeout policy, declared reads/writes/effects, snapshots, patch outputs, produced assets, execution records, logs, trace links, proof hashes, dedupe indexes, and registry graph output.
 - [`@shapeshift-labs/frontier-queue`](https://www.npmjs.com/package/@shapeshift-labs/frontier-queue): Serializable durable queue state, leases, retries, dedupe keys, patch-carrying jobs, dead-letter records, replay evidence, and queue inspection for Frontier apps.
 - [`@shapeshift-labs/frontier-swarm`](https://www.npmjs.com/package/@shapeshift-labs/frontier-swarm): Hierarchical swarm plans, lanes, compute profiles, ownership policy, semantic ownership regions, task queues, event streams, run records, merge bundles, merge indexes, queue overlays, merge admission, coordinator dashboards, changed-path checks, and proof artifacts for Frontier agent work.
-- [`@shapeshift-labs/frontier-swarm-codex`](https://www.npmjs.com/package/@shapeshift-labs/frontier-swarm-codex): Node Codex CLI adapter for Frontier swarm plans, including prompt rendering, worktree and snapshot workspaces, Codex argument compatibility, browser resource allocation, JSONL capture, verification commands, pid-backed stop, collect/apply workflows, merge indexes, queue overlays, merge bundles, normalized job evidence, coordinator query artifacts, and result artifacts.
+- [`@shapeshift-labs/frontier-swarm-git`](https://www.npmjs.com/package/@shapeshift-labs/frontier-swarm-git): Node Git, workspace, patch, changed-path, write-fence, package-link repair, patch check, HEAD read, blob hash, and apply-ledger adapter for Frontier swarm runners.
+- [`@shapeshift-labs/frontier-swarm-codex`](https://www.npmjs.com/package/@shapeshift-labs/frontier-swarm-codex): Node Codex CLI adapter for Frontier swarm plans, including prompt rendering, worktree and snapshot workspaces, Codex argument compatibility, browser resource allocation, JSONL capture, verification commands, pid-backed stop, collect/apply workflows, merge indexes, queue overlays, merge bundles, normalized job evidence, coordinator query artifacts, result artifacts, and run-log sync adapters.
+- [`@shapeshift-labs/frontier-loom-ui`](https://www.npmjs.com/package/@shapeshift-labs/frontier-loom-ui): Read-only Loom and Frontier operator dashboard for workspace-lifetime progress, active agents, queue state, evidence/admission status, run events, run-log sync projections, semantic leases, gate executions, git apply/workspace evidence, and coordinator steering intent files.
 - [`@shapeshift-labs/frontier-lang-kernel`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-kernel): Runtime-neutral semantic source graph, type/lattice/extern declarations, patch bundles, replay, hashing, evidence records, and merge-admission kernel for Frontier Lang.
 - [`@shapeshift-labs/frontier-lang-parser`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-parser): Dependency-light Frontier Lang parser for modules, entities, state, actions, effects, types, externs, targets, and lattice declarations.
 - [`@shapeshift-labs/frontier-lang-checker`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-checker): Checker and diagnostics for Frontier Lang semantic documents, including type symbols, effects, regions, lattice laws, CRDT metadata, and patch evidence.
 - [`@shapeshift-labs/frontier-lang-typescript`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-typescript): TypeScript projection adapter for Frontier Lang semantic documents, including type/entity/state/action/extern declarations and CRDT lattice descriptors.
 - [`@shapeshift-labs/frontier-lang-javascript`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-javascript): JavaScript projection adapter for Frontier Lang semantic documents, including ESM action stubs and schema/lattice descriptors.
+- [`@shapeshift-labs/frontier-lang-html`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-html): HTML semantic merge evidence and projection adapter for Frontier Lang semantic documents, including element tree identity, attributes, text/comment spans, source maps, and fail-closed browser/runtime proof gaps.
+- [`@shapeshift-labs/frontier-lang-css`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-css): CSS semantic merge evidence and projection adapter for Frontier Lang semantic documents, including selector specificity, declaration/cascade keys, custom properties, `@property` and `@page` descriptor evidence, CSS Modules/ICSS export and composition evidence, source maps, and fail-closed browser cascade/render proof gaps.
 - [`@shapeshift-labs/frontier-lang-rust`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-rust): Rust projection adapter for Frontier Lang semantic documents, including structs, aliases, and action stubs.
 - [`@shapeshift-labs/frontier-lang-python`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-python): Python projection adapter for Frontier Lang semantic documents, including dataclasses, typed patch records, and action stubs.
 - [`@shapeshift-labs/frontier-lang-c`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-c): C header projection adapter for Frontier Lang semantic documents, including structs and action prototypes.
-- [`@shapeshift-labs/frontier-lang-compiler`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-compiler): Compiler facade for Frontier Lang source documents, including parse, check, hash, diagnostics, universal AST envelopes, proof/paradigm semantic summaries, projection to TypeScript, JavaScript, Rust, Python, and C, and native source-import adapters for semantic merge evidence.
+- [`@shapeshift-labs/frontier-lang-compiler`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-compiler): Compiler facade for Frontier Lang source documents, including parse, check, hash, diagnostics, universal AST envelopes, proof/paradigm semantic summaries, projection to TypeScript, JavaScript, HTML, CSS, Rust, Python, and C, and native source-import adapters for semantic merge evidence.
 - [`@shapeshift-labs/frontier-lang-swift`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-swift): Swift source-language importer package for Frontier Lang semantic documents, including package-level metadata, SwiftSyntax adapter helpers, native import results, and semantic sidecar generation for SwiftSyntax/SwiftParser-shaped syntax trees.
 - [`@shapeshift-labs/frontier-lang-kotlin`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-kotlin): Kotlin PSI source-language importer package for Frontier Lang semantic documents, including package-level metadata, Kotlin PSI adapter helpers, native import results, and semantic sidecar generation for Kotlin PSI/KtFile-shaped syntax trees.
 - [`@shapeshift-labs/frontier-lang-java`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-java): Java source-language importer package for Frontier Lang semantic documents, including package-level metadata, Java AST adapter helpers, native import results, and semantic sidecar generation for javac/JDT/JavaParser-shaped ASTs.
@@ -57,7 +64,7 @@ The published Frontier package family is generated from one shared package catal
 - [`@shapeshift-labs/frontier-lang-csharp`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-csharp): C# Roslyn source-language importer package for Frontier Lang semantic documents, including package-level metadata, Roslyn adapter helpers, native import results, and semantic sidecar generation for SyntaxTree/SyntaxNode-shaped ASTs.
 - [`@shapeshift-labs/frontier-lang-clang`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-clang): Clang AST source-language importer package for Frontier Lang semantic documents, including package-level metadata, Clang AST JSON adapter helpers, native import results, and semantic sidecar generation for C/C++ translation units.
 - [`@shapeshift-labs/frontier-lang-cli`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang-cli): Command line interface for parsing, checking, hashing, emitting, native source import/projection, semantic slicing, and corpus roundtrip evidence for Frontier Lang projects.
-- [`@shapeshift-labs/frontier-lang`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang): Umbrella package for Frontier Lang kernel, parser, checker, compiler facade, universal AST helpers, projection adapters, and source-language importer adapters.
+- [`@shapeshift-labs/frontier-lang`](https://www.npmjs.com/package/@shapeshift-labs/frontier-lang): Umbrella package for Frontier Lang kernel, parser, checker, compiler facade, universal AST helpers, projection adapters, HTML/CSS semantic merge evidence adapters, and source-language importer adapters.
 - [`@shapeshift-labs/frontier-kv`](https://www.npmjs.com/package/@shapeshift-labs/frontier-kv): Serializable in-memory key/value state for Frontier apps, including TTL, versioned compare-and-set, batched patch mutations, scans, watchers, snapshots, JSONL event evidence, and replay verification.
 - [`@shapeshift-labs/frontier-kv-locks`](https://www.npmjs.com/package/@shapeshift-labs/frontier-kv-locks): Lease-style lock records on top of Frontier KV, including acquire, renew, release, fencing tokens, expiration, owner evidence, and replayable lock events.
 - [`@shapeshift-labs/frontier-kv-rate-limit`](https://www.npmjs.com/package/@shapeshift-labs/frontier-kv-rate-limit): Patch-native rate limit buckets for Frontier KV, including fixed windows, sliding windows, token buckets, deterministic refill, consume evidence, and reset records.
@@ -101,7 +108,7 @@ The published Frontier package family is generated from one shared package catal
 - [`@shapeshift-labs/frontier-realtime-server`](https://www.npmjs.com/package/@shapeshift-labs/frontier-realtime-server): Authoritative realtime room, tick, command validation, rate-limit, session, and snapshot-history runtime.
 - [`@shapeshift-labs/frontier-realtime-websocket`](https://www.npmjs.com/package/@shapeshift-labs/frontier-realtime-websocket): WebSocket client, wire, and Node room-server transport for Frontier realtime.
 - [`@shapeshift-labs/frontier-game`](https://www.npmjs.com/package/@shapeshift-labs/frontier-game): Game-facing entity, component, player, room, ownership, spatial interest, rollback, physics, and replication helpers above realtime.
-- [`@shapeshift-labs/loom`](https://www.npmjs.com/package/@shapeshift-labs/loom): Repo-level semantic collaboration CLI for .loom workspaces, including init, scan, status, graph snapshots, projection plans, Frontier Lang delegation, Frontier Swarm delegation, and Frontier Framework delegation.
+- [`@shapeshift-labs/loom`](https://www.npmjs.com/package/@shapeshift-labs/loom): Repo-level semantic collaboration CLI for .loom workspaces, including init, scan, status, graph snapshots, projection plans, Frontier Lang delegation, Frontier Swarm delegation, run-log sync command delegation, and Frontier Framework delegation.
 
 Package source repositories:
 
@@ -118,7 +125,10 @@ Package source repositories:
 - [`siliconjungle/-shapeshift-labs-frontier-schema`](https://github.com/siliconjungle/-shapeshift-labs-frontier-schema)
 - [`siliconjungle/-shapeshift-labs-frontier-migrations`](https://github.com/siliconjungle/-shapeshift-labs-frontier-migrations)
 - [`siliconjungle/-shapeshift-labs-frontier-event-log`](https://github.com/siliconjungle/-shapeshift-labs-frontier-event-log)
+- [`siliconjungle/-shapeshift-labs-frontier-run`](https://github.com/siliconjungle/-shapeshift-labs-frontier-run)
+- [`siliconjungle/-shapeshift-labs-frontier-lease`](https://github.com/siliconjungle/-shapeshift-labs-frontier-lease)
 - [`siliconjungle/-shapeshift-labs-frontier-inspect`](https://github.com/siliconjungle/-shapeshift-labs-frontier-inspect)
+- [`siliconjungle/-shapeshift-labs-frontier-runtime-proof`](https://github.com/siliconjungle/-shapeshift-labs-frontier-runtime-proof)
 - [`siliconjungle/-shapeshift-labs-frontier-scheduler`](https://github.com/siliconjungle/-shapeshift-labs-frontier-scheduler)
 - [`siliconjungle/-shapeshift-labs-frontier-logging`](https://github.com/siliconjungle/-shapeshift-labs-frontier-logging)
 - [`siliconjungle/-shapeshift-labs-frontier-mutation`](https://github.com/siliconjungle/-shapeshift-labs-frontier-mutation)
@@ -133,12 +143,16 @@ Package source repositories:
 - [`siliconjungle/-shapeshift-labs-frontier-worker`](https://github.com/siliconjungle/-shapeshift-labs-frontier-worker)
 - [`siliconjungle/-shapeshift-labs-frontier-queue`](https://github.com/siliconjungle/-shapeshift-labs-frontier-queue)
 - [`siliconjungle/-shapeshift-labs-frontier-swarm`](https://github.com/siliconjungle/-shapeshift-labs-frontier-swarm)
+- [`siliconjungle/-shapeshift-labs-frontier-swarm-git`](https://github.com/siliconjungle/-shapeshift-labs-frontier-swarm-git)
 - [`siliconjungle/-shapeshift-labs-frontier-swarm-codex`](https://github.com/siliconjungle/-shapeshift-labs-frontier-swarm-codex)
+- [`siliconjungle/frontier-loom-ui`](https://github.com/siliconjungle/frontier-loom-ui)
 - [`siliconjungle/-shapeshift-labs-frontier-lang-kernel`](https://github.com/siliconjungle/-shapeshift-labs-frontier-lang-kernel)
 - [`siliconjungle/-shapeshift-labs-frontier-lang-parser`](https://github.com/siliconjungle/-shapeshift-labs-frontier-lang-parser)
 - [`siliconjungle/-shapeshift-labs-frontier-lang-checker`](https://github.com/siliconjungle/-shapeshift-labs-frontier-lang-checker)
 - [`siliconjungle/-shapeshift-labs-frontier-lang-typescript`](https://github.com/siliconjungle/-shapeshift-labs-frontier-lang-typescript)
 - [`siliconjungle/-shapeshift-labs-frontier-lang-javascript`](https://github.com/siliconjungle/-shapeshift-labs-frontier-lang-javascript)
+- [`siliconjungle/-shapeshift-labs-frontier-lang-html`](https://github.com/siliconjungle/-shapeshift-labs-frontier-lang-html)
+- [`siliconjungle/-shapeshift-labs-frontier-lang-css`](https://github.com/siliconjungle/-shapeshift-labs-frontier-lang-css)
 - [`siliconjungle/-shapeshift-labs-frontier-lang-rust`](https://github.com/siliconjungle/-shapeshift-labs-frontier-lang-rust)
 - [`siliconjungle/-shapeshift-labs-frontier-lang-python`](https://github.com/siliconjungle/-shapeshift-labs-frontier-lang-python)
 - [`siliconjungle/-shapeshift-labs-frontier-lang-c`](https://github.com/siliconjungle/-shapeshift-labs-frontier-lang-c)
@@ -217,16 +231,30 @@ The main product-facing API is JSX-first:
 ```
 
 ```tsx
-import { createApp, createHtmlTemplate, fromStateEngine } from '@shapeshift-labs/frontier-dom';
+import {
+  actions as domActions,
+  createHtmlTemplate,
+  createRoot,
+  fixedLayout,
+  fromStateEngine,
+  representEach,
+  state as frontierState,
+  virtualEach,
+  when
+} from '@shapeshift-labs/frontier-dom';
 import { createActionRegistry } from '@shapeshift-labs/frontier-mutation';
-import { each, fixedLayout, text, virtualEach, when } from '@shapeshift-labs/frontier-dom/jsx-runtime';
 
-const actions = createActionRegistry({ state: fromStateEngine(state), actor: 'local-user' });
+const $ = frontierState<{
+  session: { userId: string | null };
+  todos: Array<{ id: string; text: string; done: boolean }>;
+  messages: Array<{ id: string; body: string }>;
+  user: { name: string };
+}>();
+const actionRegistry = createActionRegistry({ state: fromStateEngine(state), actor: 'local-user' });
 
-const app = createApp({
+const root = createRoot('#app', {
   source: fromStateEngine(state),
-  target: '#app',
-  actionRegistry: actions,
+  actionRegistry,
   templates: {
     'todo-row.v1': createHtmlTemplate(
       '<li><span data-part="text"></span><input data-part="done" type="checkbox"></li>',
@@ -240,28 +268,41 @@ const app = createApp({
         }
       ]
     ),
+    'todo-dot.v1': createHtmlTemplate(
+      '<i data-part="dot"></i>',
+      [{ selector: '[data-part="dot"]', attr: { 'data-id': 'id' } }]
+    ),
     'signed-in.v1': { create: renderSignedInPanel },
     'signed-out.v1': { create: renderSignedOutPanel },
     'message-row.v1': { create: renderMessage }
+  },
+  lodFrames: {
+    minimap: () => latestLodFrame
   }
 });
 
-app.mount(
+type UserPath = (typeof $)['user'];
+type TodoPath = (typeof $)['todos'][number];
+
+function TodoTitle({ user }: { user: UserPath }) {
+  return <h1>{user.name}</h1>;
+}
+
+function TodoEditor({ todo }: { todo: TodoPath }) {
+  return <input value={todo.text} />;
+}
+
+root.render(
   <main frId="app">
-    {text('/user/name', { frId: 'user-name' })}
-    <button frId="toggle-first" $action="todo.toggle" $payload={{ id: '/todos/0/id' }} />
-    {when('/session/userId', {
+    <TodoTitle user={$.user} />
+    <TodoEditor todo={$.todos[0]} />
+    <button frId="toggle-first" onClick={domActions.todo.toggle({ id: $.todos[0].id })} />
+    {when($.session.userId, {
       frId: 'session-slot',
       template: 'signed-in.v1',
       fallbackTemplate: 'signed-out.v1'
     })}
-    {each('/todos/*', {
-      frId: 'todos',
-      as: 'ul',
-      keyBy: 'id',
-      fields: ['text', 'done'],
-      template: 'todo-row.v1'
-    })}
+    <ul frId="todos" $each={{ path: '/todos/*', keyBy: 'id', fields: ['text', 'done'], template: 'todo-row.v1' }} />
     {virtualEach('/messages/*', {
       frId: 'messages',
       keyBy: 'id',
@@ -270,9 +311,23 @@ app.mount(
       layout: fixedLayout(28),
       overscan: 8
     })}
+    {representEach('/todos/*', {
+      frId: 'todos-minimap',
+      keyBy: 'id',
+      representation: 'minimap',
+      template: 'todo-dot.v1',
+      levelVariants: { 0: 'full', 1: 'dot' },
+      levelTemplates: { 0: 'todo-row.v1', 1: 'todo-dot.v1' },
+      lodFrame: 'minimap',
+      lodWatch: '/camera',
+      visibleOnly: true,
+      replaceOnVariantChange: true
+    })}
   </main>
 );
 ```
+
+The JSX runtime also exposes lower-level helpers from `@shapeshift-labs/frontier-dom/jsx-runtime` for explicit imports. `state()` and `path()` create serializable path refs that can flow through component props; children, bindable props, class/style objects, form `value`/`checked`, and action payloads infer manifest edges from those refs. `bind(path)` remains the explicit escape hatch, `model(path)` keeps form policy explicit when inference is not enough, and `action(id, payload)` binds DOM events to the shared Frontier action registry without the action namespace proxy.
 
 Production builds should prefer the compiler path. The optional `./compiler` subpath lowers a static TSX entry to HTML plus a serializable manifest, and `createApp().hydrate(compiled)` reconciles existing server DOM before binding it:
 
@@ -567,10 +622,51 @@ renderer.virtualEach('/messages/*', {
 });
 ```
 
+Alternate representations use the same patch path without duplicating app state. `representEach()` is for minimaps, overview lanes, compact sidebars, synchronized inspectors, or any view that should materialize the same records differently. It is intentionally structural: `frontier-dom` can consume a LOD frame from `@shapeshift-labs/frontier-lod`, but does not import LOD directly.
+
+```ts
+renderer.representEach('/entities/*', {
+  container: minimap,
+  keyBy: 'id',
+  representation: 'minimap',
+  fields: ['x', 'y', 'team'],
+  lod: {
+    frame: () => latestLodFrame,
+    watch: '/camera',
+    levelVariants: { 0: 'label', 1: 'dot' },
+    hiddenVariant: 'hidden',
+    visibleOnly: true
+  },
+  replaceOnVariantChange: true,
+  create(entity, context) {
+    return renderMinimapEntity(entity, context.representation);
+  },
+  update(node, entity, context) {
+    updateMinimapEntity(node, entity, context.representation);
+  }
+});
+```
+
+The JSX/manifest form is equivalent and works through the compiler:
+
+```tsx
+{representEach('/entities/*', {
+  frId: 'minimap',
+  keyBy: 'id',
+  representation: 'minimap',
+  template: 'entity-dot.v1',
+  levelVariants: { 0: 'label', 1: 'dot' },
+  levelTemplates: { 0: 'entity-label.v1', 1: 'entity-dot.v1' },
+  lodFrame: 'camera-lod',
+  lodWatch: '/camera',
+  visibleOnly: true
+})}
+```
+
 JSX helpers lower to the same manifest shape at runtime and in the compiler:
 
 ```tsx
-import { each, fixedLayout, text, virtualEach, when } from '@shapeshift-labs/frontier-dom/jsx-runtime';
+import { each, fixedLayout, representEach, text, virtualEach, when } from '@shapeshift-labs/frontier-dom/jsx-runtime';
 
 const view = (
   <main>
@@ -593,6 +689,13 @@ const view = (
       viewport: { offset: 0, size: 640 },
       layout: fixedLayout(28),
       overscan: 8
+    })}
+    {representEach('/todos/*', {
+      frId: 'todos-minimap',
+      keyBy: 'id',
+      representation: 'minimap',
+      template: 'todo-dot.v1',
+      lodFrame: 'minimap'
     })}
   </main>
 );
@@ -626,20 +729,61 @@ snapshot.dirtyBindings;
 snapshot.domWrites;
 snapshot.virtualRanges;
 snapshot.actionProvenance;
+snapshot.registry;
 snapshot.hydration;
 ```
 
-The inspector is trace-sink based: the renderer emits patch notifications, dirty binding updates, DOM writes, virtual ranges, manifest action dispatches, and hydration reports only when `trace` is enabled. Passing a `frontier-mutation` action registry adds action history records to the same snapshot, so DOM events and non-DOM action dispatches can be inspected together.
+The inspector is trace-sink based: the renderer emits patch notifications, dirty binding updates, DOM writes, virtual ranges, manifest action dispatches, and hydration reports only when `trace` is enabled. Passing a `frontier-mutation` action registry adds action history records and its Frontier registry graph to the same snapshot, so DOM events, non-DOM action dispatches, declared reads/writes, and feature impact edges can be inspected together.
+
+Hydration can also carry the Frontier state basis used by CRDT/sync stacks, event logs, and action provenance. The DOM package keeps this as a structural boundary: CRDT documents, sync providers, event logs, and mutation registries can expose `getHeads()`, `getStateVector()`, `getHydrationBasis()`, `getStats()`, `getCheckpoint()`, or `history()` without making the renderer import those higher-level packages.
+
+```ts
+import {
+  createApp,
+  fromCrdtStateEngine,
+  serializeDomState
+} from '@shapeshift-labs/frontier-dom';
+import { createHydrationBasisEnvelope } from '@shapeshift-labs/frontier-dom/ssr';
+import { inspectDomApp } from '@shapeshift-labs/frontier-dom/devtools';
+
+const source = fromCrdtStateEngine(crdtState, {
+  sync: syncProvider,
+  eventLog,
+  actionRegistry
+});
+
+const serialized = serializeDomState({ manifest, source });
+serialized.source?.basis;
+serialized.source?.heads;
+serialized.source?.stateVector;
+serialized.source?.sync;
+serialized.source?.eventLog;
+serialized.source?.actionProvenance;
+
+const app = createApp({ target, manifest, source, trace: true });
+app.hydrate(serialized, {
+  metadataPolicy: 'reconcile',
+  snapshotPolicy: 'reconcile',
+  missingAnchorPolicy: 'rematerialize'
+});
+
+const basis = createHydrationBasisEnvelope({ manifest, source });
+const inspected = inspectDomApp(app, { actionRegistry });
+inspected.hydration?.source.actual?.sync;
+inspected.hydration?.source.actual?.eventLog;
+inspected.hydration?.source.actual?.actionProvenance;
+```
 
 ## Browser Conformance
 
 Run the package browser matrix with:
 
 ```sh
+npm run browser:install
 npm run test:browser
 ```
 
-The matrix runs compiler HTML/manifest snapshots in Node, then exercises these fixtures in a real browser when Chrome is available:
+The matrix runs compiler HTML/manifest snapshots in Node, then exercises these fixtures in a real browser. `npm test` now treats browser conformance as mandatory; CI installs the pinned Chrome for Testing `chrome@142.0.7444.175` build with `npm run browser:install` before running the package tests.
 
 - keyed hydration
 - nested lists
@@ -649,6 +793,13 @@ The matrix runs compiler HTML/manifest snapshots in Node, then exercises these f
 - forms, selection, and IME composition
 - focus preservation during keyed row movement
 - hydration reconciliation for source metadata, snapshots, missing anchors, and stale anchors
+- dynamic virtual rows with viewport invalidation and range tracing
+- alternate representations for minimap-style LOD materialization
+- SSR hydration script parse/resume helpers
+- async action/data flow through manifest actions
+- route view swaps through `when()`
+- devtools patch/dirty-binding/DOM-write/action snapshots
+- actionable manifest diagnostics for missing targets, actions, and templates
 
 ## Benchmarks
 
@@ -660,8 +811,11 @@ Run package-local Frontier measurements:
 npm run bench
 ```
 
-Run the root competitor harness:
+Run the root competitor harnesses:
 
 ```sh
 npm run bench:frontier-dom:competitors
+npm run bench:frontier-dom:browser
 ```
+
+The browser competitor harness covers real Chrome row text updates, keyed head rotation, and virtual window shifting across Frontier, React, Preact, Solid, Vue, compiled Svelte, and Lit where a comparable local adapter exists.
